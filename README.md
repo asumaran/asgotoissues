@@ -111,4 +111,4 @@ URL).
 `scripts/release.sh <X.Y.Z>` gates on a clean tree + green vet/build/test,
 generates the CHANGELOG entry from commit subjects, syncs the manifest
 version, commits, tags and publishes the GitHub release; CI then attaches
-`asgotoissues-darwin-arm64`, the asset `fetch-binary.sh` downloads on installs.
+the `asgotoissues-<os>-<arch>` binaries (macOS and Linux, arm64 and amd64), the assets `fetch-binary.sh` downloads on installs.

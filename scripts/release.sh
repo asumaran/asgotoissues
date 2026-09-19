@@ -1,33 +1,45 @@
 #!/usr/bin/env bash
 #
-# release.sh — cut a new asgotoissues release, gated on a clean tree and a green
+# release.sh — cut a new release, gated on a clean tree and a green
 # vet+build+test.
 #
 # Releases are created from a tag: a GitHub Actions workflow then compiles the
-# binary (stamping the version via -ldflags) and attaches it as a release asset.
-# This script makes sure we never tag a half-finished or broken state:
+# binaries (stamping the version via -ldflags) and attaches them as release
+# assets. This script makes sure we never tag a half-finished or broken state:
 #
 #   1. the working tree must be clean (the tag == exactly what is committed)
 #   2. `go vet ./...`, `go build` and `go test ./...` must pass
 #
 # The CHANGELOG entry and the GitHub release notes are generated automatically
 # from the commit subjects since the previous tag — nothing to write by hand.
+# `--demo` also re-records the README demo GIF (docs/demo.gif) with asdemokit's
+# `asdemo record`, after the manifest version is synced so the recorded popup
+# carries the new version; the refreshed GIF rides the release commit. It needs
+# the scenario in scripts/demo and takes over a herdr session while it records,
+# which is why it is opt-in.
+#
+# This file is the same in every plugin of the family: it reads what it needs
+# from the repository it runs in.
 #
 # Usage:
 #   scripts/release.sh 0.2.0            # release version 0.2.0
 #   scripts/release.sh 0.2.0 --no-push  # do everything locally, skip push
+#   scripts/release.sh 0.2.0 --demo     # also re-record docs/demo.gif
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SELF="$ROOT/scripts/release.sh" # $0 may be relative to where the script was called from
 cd "$ROOT"
 
 DO_PUSH=true
+DO_DEMO=false
 VERSION=""
 for arg in "$@"; do
   case "$arg" in
     --no-push) DO_PUSH=false ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --demo)    DO_DEMO=true ;;
+    -h|--help) sed -n '2,28p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)        echo "unknown argument: $arg" >&2; exit 2 ;;
     *)         VERSION="$arg" ;;
   esac
@@ -53,6 +65,10 @@ if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
   echo "error: tag ${tag} already exists." >&2
   exit 1
 fi
+if $DO_DEMO && [ ! -f scripts/demo/scenario.sh ]; then
+  echo "error: --demo needs scripts/demo/scenario.sh, which this repository does not have." >&2
+  exit 1
+fi
 
 # --- quality gate -----------------------------------------------------------
 echo "==> go vet ./..."
@@ -61,6 +77,32 @@ echo "==> go build ./..."
 go build ./...
 echo "==> go test ./..."
 go test ./...
+
+# --- sync the manifest ------------------------------------------------------
+# Before the recording, so the recorded popup carries the version being
+# released. Through a temp file: `sed -i` is not portable between BSD and GNU.
+sed -E "s/^version = \".*\"/version = \"${VERSION}\"/" herdr-plugin.toml > herdr-plugin.toml.tmp
+mv herdr-plugin.toml.tmp herdr-plugin.toml
+
+# --- re-record the README demo GIF (opt-in) ---------------------------------
+if $DO_DEMO; then
+  demo_bin="${ASDEMO_BIN:-}"
+  if [ -z "$demo_bin" ]; then
+    demo_bin="$(command -v asdemo || true)"
+  fi
+  if [ -z "$demo_bin" ]; then
+    git checkout -- herdr-plugin.toml
+    echo "error: asdemo not found (github.com/asumaran/asdemokit); put it on PATH or set ASDEMO_BIN." >&2
+    exit 1
+  fi
+  echo "==> Re-recording docs/demo.gif (${demo_bin})..."
+  if ! "$demo_bin" record; then
+    git checkout -- herdr-plugin.toml
+    git checkout -- docs/demo.gif 2>/dev/null || true
+    echo "error: demo recording failed; nothing committed. Fix the demo environment or release without --demo." >&2
+    exit 1
+  fi
+fi
 
 # --- generate changelog + release notes -------------------------------------
 prev_tag="$(git tag --list 'v*' --sort=-version:refname | head -n1 || true)"
@@ -98,11 +140,11 @@ if [ -n "$prev_tag" ] && [ -n "$repo_slug" ]; then
     "$repo_slug" "$prev_tag" "$tag" >> "$notes_file"
 fi
 
-# Keep the plugin manifest version in sync with the release tag.
-sed -i '' -E "s/^version = \".*\"/version = \"${VERSION}\"/" herdr-plugin.toml
-
 # --- apply ------------------------------------------------------------------
 git add CHANGELOG.md herdr-plugin.toml
+if $DO_DEMO; then
+  git add docs/demo.gif # rides the release commit
+fi
 git commit -m "chore(release): ${tag}"
 # -m keeps the tag creatable without an editor: tag.gpgsign turns every tag
 # into an annotated one, and an annotated tag without a message needs a tty.
@@ -114,7 +156,7 @@ if $DO_PUSH; then
   # The build workflow triggers on a *published GitHub release*, not on a tag
   # push, so create the release. Notes come from the generated commit list.
   gh release create "$tag" --verify-tag --notes-file "$notes_file" --title "$tag"
-  echo "released ${tag}: pushed branch + tag and published the GitHub release. CI will attach the binary."
+  echo "released ${tag}: pushed branch + tag and published the GitHub release. CI will attach the binaries."
 else
   echo "released ${tag} locally (tag created, not pushed)."
   echo "The CHANGELOG entry is already committed; finish with:"

@@ -13,7 +13,7 @@ lifecycle as `asgotopr` and `asgoto`, which this repo is modeled on.
 
 Distributed as a herdr plugin (`herdr plugin install asumaran/asgotoissues`; the
 manifest's `[[build]]` runs `scripts/fetch-binary.sh`). Each GitHub Release
-attaches `asgotoissues-darwin-arm64`. There is no published library.
+attaches the `asgotoissues-<os>-<arch>` binaries (macOS and Linux, arm64 and amd64). There is no published library.
 
 ## Stack & layout
 
@@ -154,6 +154,6 @@ driver forces a full redraw (pty resize + SIGWINCH) before reading a frame.
 
 `scripts/release.sh <X.Y.Z>` — clean-tree + vet/build/test gate, CHANGELOG
 generation from commit subjects, manifest version sync, commit + tag + GitHub
-release; CI (`.github/workflows/release.yml`) attaches `asgotoissues-darwin-arm64`.
+release; CI (`.github/workflows/release.yml`) attaches the `asgotoissues-<os>-<arch>` binaries (macOS and Linux, arm64 and amd64).
 Releasing never touches the linked plugin's `./asgotoissues`; rebuild locally to
 keep testing dev code.

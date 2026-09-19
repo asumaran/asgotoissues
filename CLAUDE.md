@@ -49,6 +49,9 @@ Files are split by concern but everything stays in `package main`:
   occurs in one piece could still match scattered letters before it. When the
   query occurs whole, that occurrence is the match, for the highlight and for
   the score. The same file in every tool of the family.
+- `highlight.go` — `highlight`/`highlightFrom`, `matchOver`, `onSel`,
+  `selPad` and the `stSel`/`stMatch` styles: how a match and the selected row
+  look. The same file in every tool of the family.
 - `frame.go` — the single-frame layout shared by the family: `hline`, `fit`,
   `framed`, `frameHead`, `splitMain`, `scrollPos` and the section rows (`mainY`,
   `listY`, `frameRows`, each with or without the optional context line).
@@ -91,11 +94,14 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   list. The list starts on screen row `listY`, one cell in from the left side,
   which is what the click-to-row math uses. Errors and notices take the help
   line.
-- **Filter matches** look the same in every picker of the family, asgitlog's
-  way: the match color plus an underline, on top of whatever style the text
-  already has. The selected row shows them too. Each piece of that row
-  carries the selection's background itself, because nesting a styled match
-  inside one big `stSel.Render` would cut the background at the match's reset.
+- **Filter matches** look the same in every tool of the family and come from
+  one place, `highlight.go` (the same file in each repo; it also owns `stSel`
+  and `stMatch`): a match is the match color plus an underline on top of the
+  style the text already has, and the selected row shows them too. That row
+  is never one big `stSel.Render` around styled text, because the reset that
+  ends a match would cut the background: every piece is rendered over `stSel`
+  (`highlight(s, idx, stSel)`) and `selPad` fills the rest. Do not write a
+  local highlighter.
 - **Resizable list**: `shift+←/→` move the divider in 5% steps, as in
   asgitlog. The setting is the PREVIEW's share of the width, clamped to
   30-85 and saved as `split-columns` in the state dir; the default is 75

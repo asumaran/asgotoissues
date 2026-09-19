@@ -33,21 +33,17 @@ func truncate(s string, width int) string {
 // ---- styles ----
 
 var (
-	stPrompt = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
-	stDev    = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
-	stSel    = lipgloss.NewStyle().Background(lipgloss.Color("8")).Bold(true)
-	// a filter match: asgitlog's look, also over the selected row's background
-	stMatch    = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Underline(true)
-	stSelMatch = stSel.Foreground(lipgloss.Color("13")).Underline(true)
-	stHeader   = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	stDim      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	stTitle    = lipgloss.NewStyle().Bold(true)
-	stKey      = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	stCount    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	stError    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-	stTodo     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	stDoing    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	stBlocked  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	stPrompt  = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
+	stDev     = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
+	stHeader  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	stDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	stTitle   = lipgloss.NewStyle().Bold(true)
+	stKey     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	stCount   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	stError   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	stTodo    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	stDoing   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	stBlocked = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 // stateStyle colors an issue by its state: green in progress, red blocked,
@@ -280,49 +276,13 @@ func (m *model) rowLine(r row, selected bool, keyW int) string {
 	it := r.e.it
 	pad := strings.Repeat(" ", max(0, keyW-ansi.StringWidth(it.Key)))
 	if selected {
-		return stSel.Render("▌ "+it.Key+pad+" ") + highlight(it.Summary, r.idx, true)
+		return stSel.Render("▌ "+it.Key+pad+" ") + highlight(it.Summary, r.idx, stSel)
 	}
 	title := it.Summary
 	if r.match && len(r.idx) > 0 {
-		title = highlight(title, r.idx, false)
+		title = highlight(title, r.idx, lipgloss.NewStyle())
 	}
 	return "  " + stateStyle(it.state()).Render(it.Key) + pad + " " + title
-}
-
-// highlight styles the fuzzy-matched characters within a label. The selected
-// row keeps its background under them, so a match stays visible where the
-// cursor is.
-func highlight(label string, idx []int, selected bool) string {
-	plain, match := lipgloss.NewStyle(), stMatch
-	if selected {
-		plain, match = stSel, stSelMatch
-	}
-	set := make(map[int]bool, len(idx))
-	for _, i := range idx {
-		set[i] = true
-	}
-	var b, run strings.Builder
-	on := false
-	flush := func() {
-		if run.Len() == 0 {
-			return
-		}
-		if on {
-			b.WriteString(match.Render(run.String()))
-		} else {
-			b.WriteString(plain.Render(run.String()))
-		}
-		run.Reset()
-	}
-	for i, r := range label { // i is a byte offset, like the matcher's
-		if set[i] != on {
-			flush()
-			on = set[i]
-		}
-		run.WriteRune(r)
-	}
-	flush()
-	return b.String()
 }
 
 func (m *model) ensureVisible() {

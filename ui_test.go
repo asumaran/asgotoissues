@@ -294,11 +294,8 @@ func TestSelectedRowKeepsItsMatches(t *testing.T) {
 	if r.kind != "issue" || len(r.idx) == 0 {
 		t.Fatalf("the cursor should sit on the matching issue: %+v", r)
 	}
-	if !stMatch.GetUnderline() || !stSelMatch.GetUnderline() || stSelMatch.GetBackground() != stSel.GetBackground() {
-		t.Errorf("a match is underlined, and keeps the selection's background on the selected row")
-	}
 	sel, plain := m.rowLine(r, true, m.keyW()), m.rowLine(r, false, m.keyW())
-	if !strings.Contains(sel, stSelMatch.Render("readme")) {
+	if !strings.Contains(sel, matchOver(stSel).Render("readme")) {
 		t.Errorf("selected row lost its match: %q", sel)
 	}
 	if !strings.Contains(plain, stMatch.Render("readme")) {

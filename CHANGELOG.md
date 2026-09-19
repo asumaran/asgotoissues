@@ -1,3 +1,7 @@
+## v0.4.0 (2026-09-19)
+
+* refactor: rename gotojira to asgotoissues (1c02954)
+
 ## v0.3.0 (2026-09-19)
 
 * feat(mouse): move the selection with the wheel over the list (5915625)

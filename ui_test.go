@@ -283,3 +283,33 @@ func TestListPositionShowsOnlyWhileTheListOverflows(t *testing.T) {
 		t.Errorf("the edge is %d cells wide, want 120", w)
 	}
 }
+
+func TestSelectedRowKeepsItsMatches(t *testing.T) {
+	var mm tea.Model = testModel(t)
+	for _, r := range "readme" {
+		mm, _ = mm.(model).handleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	m := mm.(model)
+	r := m.rows[m.cursor]
+	if r.kind != "issue" || len(r.idx) == 0 {
+		t.Fatalf("the cursor should sit on the matching issue: %+v", r)
+	}
+	if !stMatch.GetUnderline() || !stSelMatch.GetUnderline() || stSelMatch.GetBackground() != stSel.GetBackground() {
+		t.Errorf("a match is underlined, and keeps the selection's background on the selected row")
+	}
+	sel, plain := m.rowLine(r, true, m.keyW()), m.rowLine(r, false, m.keyW())
+	if !strings.Contains(sel, stSelMatch.Render("readme")) {
+		t.Errorf("selected row lost its match: %q", sel)
+	}
+	if !strings.Contains(plain, stMatch.Render("readme")) {
+		t.Errorf("row lost its match: %q", plain)
+	}
+	if ansi.Strip(sel)[len("▌ "):] != ansi.Strip(plain)[len("  "):] {
+		t.Errorf("selecting a row changes only its gutter: %q vs %q", ansi.Strip(sel), ansi.Strip(plain))
+	}
+	// cutting the row keeps the ellipsis inside the last styled run
+	cut := truncate(sel, 14)
+	if ansi.StringWidth(cut) != 14 || !strings.Contains(ansi.Strip(cut), "…") {
+		t.Errorf("cut = %q", cut)
+	}
+}

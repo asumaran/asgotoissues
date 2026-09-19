@@ -86,6 +86,11 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   list. The list starts on screen row `listY`, one cell in from the left side,
   which is what the click-to-row math uses. Errors and notices take the help
   line.
+- **Filter matches** look the same in every picker of the family, asgitlog's
+  way: the match color plus an underline, on top of whatever style the text
+  already has. The selected row shows them too. Each piece of that row
+  carries the selection's background itself, because nesting a styled match
+  inside one big `stSel.Render` would cut the background at the match's reset.
 - **Resizable list**: `shift+←/→` move the divider in 5% steps, as in
   asgitlog. The setting is the PREVIEW's share of the width, clamped to
   30-85 and saved as `split-columns` in the state dir; the default is 75

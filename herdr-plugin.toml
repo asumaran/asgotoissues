@@ -1,0 +1,23 @@
+id = "asumaran.gotojira"
+name = "gotojira"
+version = "0.1.0"
+min_herdr_version = "0.7.5"
+description = "Jump to your open Jira tickets across every configured stack"
+platforms = ["macos"]
+
+[[build]]
+command = ["scripts/fetch-binary.sh"]
+
+[[actions]]
+id = "open"
+title = "Open Jira ticket switcher"
+contexts = ["global"]
+command = ["scripts/open-pane.sh"]
+
+[[panes]]
+id = "picker"
+title = "Jira"
+placement = "popup"
+width = "85%"
+height = "70%"
+command = ["./gotojira"]

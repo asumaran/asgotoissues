@@ -1,0 +1,306 @@
+package main
+
+// Jira data source. One search per stack, run concurrently as tea.Cmds:
+// Cloud uses POST /rest/api/2/search/jql (v2 so text fields come back as
+// wiki markup instead of ADF), Server/DC uses POST /rest/api/2/search. The
+// JQL is fixed: tickets assigned to the authenticated user that are not in
+// the Done status category, newest activity first. Descriptions ride along in
+// the search response (no second round trip), so a refresh is a single
+// request per stack plus pagination.
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+type issue struct {
+	Key         string    `json:"key"` // identity (unique across a site)
+	Stack       string    `json:"stack"`
+	URL         string    `json:"url"`
+	Summary     string    `json:"summary"`
+	Description string    `json:"description"` // wiki markup (may be empty)
+	Status      string    `json:"status"`
+	StatusCat   string    `json:"status_cat"` // "To Do" | "In Progress" | ...
+	Type        string    `json:"type"`
+	Priority    string    `json:"priority"`
+	Project     string    `json:"project"`
+	ParentKey   string    `json:"parent_key,omitempty"`
+	Created     time.Time `json:"created"`
+	Updated     time.Time `json:"updated"`
+}
+
+// number returns the numeric part of the key ("PLAT-2099" → "2099").
+func (i issue) number() string {
+	if p := strings.LastIndexByte(i.Key, '-'); p >= 0 {
+		return i.Key[p+1:]
+	}
+	return i.Key
+}
+
+const (
+	jiraJQL      = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
+	jiraTimeout  = 10 * time.Second
+	jiraPageSize = 100
+	jiraMaxPages = 5 // hard cap: 500 open tickets per stack is plenty
+)
+
+var jiraFields = []string{"key", "summary", "status", "issuetype", "priority", "project", "parent", "created", "updated", "description"}
+
+var httpClient = &http.Client{Timeout: jiraTimeout}
+
+// searchResp covers both endpoints' response shapes.
+type searchResp struct {
+	Issues []struct {
+		Key    string `json:"key"`
+		Fields struct {
+			Summary     string `json:"summary"`
+			Description string `json:"description"`
+			Created     string `json:"created"`
+			Updated     string `json:"updated"`
+			Status      struct {
+				Name     string `json:"name"`
+				Category struct {
+					Name string `json:"name"`
+				} `json:"statusCategory"`
+			} `json:"status"`
+			IssueType struct {
+				Name string `json:"name"`
+			} `json:"issuetype"`
+			Priority struct {
+				Name string `json:"name"`
+			} `json:"priority"`
+			Project struct {
+				Key string `json:"key"`
+			} `json:"project"`
+			Parent struct {
+				Key string `json:"key"`
+			} `json:"parent"`
+		} `json:"fields"`
+	} `json:"issues"`
+	// cloud pagination
+	IsLast        bool   `json:"isLast"`
+	NextPageToken string `json:"nextPageToken"`
+	// server pagination
+	StartAt    int `json:"startAt"`
+	MaxResults int `json:"maxResults"`
+	Total      int `json:"total"`
+	// errors
+	ErrorMessages []string `json:"errorMessages"`
+	Message       string   `json:"message"`
+}
+
+func (r searchResp) errText() string {
+	if len(r.ErrorMessages) > 0 {
+		return strings.Join(r.ErrorMessages, "; ")
+	}
+	return r.Message
+}
+
+// fetchStack returns every open ticket assigned to the user on one stack.
+func fetchStack(s stack) ([]issue, error) {
+	cred, err := resolveCredential(s)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), jiraTimeout*jiraMaxPages)
+	defer cancel()
+
+	var out []issue
+	var pageToken string
+	startAt := 0
+	for page := 0; page < jiraMaxPages; page++ {
+		var body map[string]any
+		var endpoint string
+		if s.Type == "server" {
+			endpoint = s.BaseURL + "/rest/api/2/search"
+			body = map[string]any{"jql": jiraJQL, "maxResults": jiraPageSize, "startAt": startAt, "fields": jiraFields}
+		} else {
+			endpoint = s.BaseURL + "/rest/api/2/search/jql"
+			body = map[string]any{"jql": jiraJQL, "maxResults": jiraPageSize, "fields": jiraFields}
+			if pageToken != "" {
+				body["nextPageToken"] = pageToken
+			}
+		}
+		resp, err := postJSON(ctx, endpoint, cred, body)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", s.Name, err)
+		}
+		for _, raw := range resp.Issues {
+			created, _ := parseJiraTime(raw.Fields.Created)
+			updated, _ := parseJiraTime(raw.Fields.Updated)
+			out = append(out, issue{
+				Key:         raw.Key,
+				Stack:       s.Name,
+				URL:         s.BaseURL + "/browse/" + raw.Key,
+				Summary:     raw.Fields.Summary,
+				Description: raw.Fields.Description,
+				Status:      raw.Fields.Status.Name,
+				StatusCat:   raw.Fields.Status.Category.Name,
+				Type:        raw.Fields.IssueType.Name,
+				Priority:    raw.Fields.Priority.Name,
+				Project:     raw.Fields.Project.Key,
+				ParentKey:   raw.Fields.Parent.Key,
+				Created:     created,
+				Updated:     updated,
+			})
+		}
+		if s.Type == "server" {
+			startAt += len(resp.Issues)
+			if len(resp.Issues) == 0 || startAt >= resp.Total {
+				break
+			}
+			continue
+		}
+		if resp.IsLast || resp.NextPageToken == "" || len(resp.Issues) == 0 {
+			break
+		}
+		pageToken = resp.NextPageToken
+	}
+	return out, nil
+}
+
+func postJSON(ctx context.Context, endpoint string, cred credential, body map[string]any) (*searchResp, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	if cred.user != "" {
+		req.SetBasicAuth(cred.user, cred.secret)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+cred.secret)
+	}
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(res.Body, 32<<20))
+	if err != nil {
+		return nil, err
+	}
+	var parsed searchResp
+	jsonErr := json.Unmarshal(data, &parsed)
+	if res.StatusCode/100 != 2 {
+		msg := parsed.errText()
+		if msg == "" {
+			msg = firstLine(string(data))
+		}
+		if len(msg) > 120 {
+			msg = msg[:120] + "…"
+		}
+		return nil, fmt.Errorf("HTTP %d %s", res.StatusCode, msg)
+	}
+	if jsonErr != nil {
+		return nil, fmt.Errorf("bad response: %w", jsonErr)
+	}
+	return &parsed, nil
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
+// parseJiraTime accepts Jira's "2026-08-17T11:40:18.035-0400" (no colon in
+// the zone offset) as well as plain RFC 3339.
+func parseJiraTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty time")
+	}
+	for _, layout := range []string{"2006-01-02T15:04:05.000-0700", "2006-01-02T15:04:05-0700", time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("bad time %q", s)
+}
+
+// ---- merging ----
+
+// mergeStacks builds the full list from per-stack results, falling back to
+// the cached issues of any stack whose fetch failed. Within a stack, issues
+// are ordered newest created first (which matches descending key numbers
+// within a project); stacks keep their config order.
+func mergeStacks(stacks []stack, fresh map[string][]issue, cached []issue) []issue {
+	cachedBy := map[string][]issue{}
+	for _, it := range cached {
+		cachedBy[it.Stack] = append(cachedBy[it.Stack], it)
+	}
+	var out []issue
+	for _, s := range stacks {
+		items, ok := fresh[s.Name]
+		if !ok {
+			items = cachedBy[s.Name]
+		}
+		sort.SliceStable(items, func(i, j int) bool { return newerIssue(items[i], items[j]) })
+		out = append(out, items...)
+	}
+	return out
+}
+
+// newerIssue orders by creation date (newest first), falling back to key
+// number when the dates tie or are missing (cache entries from older
+// snapshots may lack Created until the next refresh).
+func newerIssue(a, b issue) bool {
+	if !a.Created.Equal(b.Created) {
+		return a.Created.After(b.Created)
+	}
+	if a.Project == b.Project {
+		na, _ := strconv.Atoi(a.number())
+		nb, _ := strconv.Atoi(b.number())
+		if na != nb {
+			return na > nb
+		}
+	}
+	return a.Updated.After(b.Updated)
+}
+
+// ---- bubbletea plumbing ----
+
+type stackMsg struct {
+	stack  string
+	issues []issue
+	err    error
+}
+
+func fetchStackCmd(s stack) tea.Cmd {
+	return func() tea.Msg {
+		issues, err := fetchStack(s)
+		return stackMsg{stack: s.Name, issues: issues, err: err}
+	}
+}
+
+// refreshSynchronously fetches every stack inline (used by -dump). Returns
+// the merged list plus one error per failed stack.
+func refreshSynchronously(stacks []stack, cached []issue) ([]issue, []error) {
+	fresh := map[string][]issue{}
+	var errs []error
+	for _, s := range stacks {
+		items, err := fetchStack(s)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		fresh[s.Name] = items
+	}
+	return mergeStacks(stacks, fresh, cached), errs
+}

@@ -216,11 +216,7 @@ func (m *model) applyFilter() {
 	q := strings.ToLower(strings.TrimSpace(m.ti.Value()))
 	m.rows = buildRows(m.entries, q, m.summaries, m.keysC, m.metas)
 	if q != "" {
-		if b := bestMatch(m.rows); b >= 0 {
-			m.cursor = b
-		} else {
-			m.cursor = firstIssue(m.rows)
-		}
+		m.cursor = firstIssue(m.rows) // ranked: the best match is the first row
 		return
 	}
 	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != "issue" {

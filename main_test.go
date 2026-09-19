@@ -279,7 +279,7 @@ func TestRankingPrefersExactKeyAndNumber(t *testing.T) {
 		"boundary":  "PLAT-2098",
 	} {
 		rows := buildRows(entries, q, s, k, m)
-		b := bestMatch(rows)
+		b := firstIssue(rows) // ranked: the best match is the first row
 		if b < 0 {
 			t.Errorf("query %q: no match", q)
 			continue
@@ -321,5 +321,36 @@ func TestNewerIssueFallsBackToKeyNumber(t *testing.T) {
 	c := issue{Key: "PLAT-1", Project: "PLAT", Created: time.Unix(100, 0)}
 	if !newerIssue(c, a) {
 		t.Errorf("a created date beats a missing one")
+	}
+}
+
+func TestFilteringRanksRowsAndTheirStacks(t *testing.T) {
+	entries := buildEntries([]issue{
+		{Key: "WORK-9", Stack: "work", Summary: "Invoices need a dedicated export table"}, // i n d e x a b l e, scattered
+		{Key: "WORK-3", Stack: "work", Summary: "Site TV indexable"},
+		{Key: "HOME-1", Stack: "home", Summary: "Make the docs indexable by search"},
+	})
+	s, k, m := corpora(entries)
+	var got []string
+	for _, r := range buildRows(entries, "indexable", s, k, m) {
+		if r.kind == "header" {
+			got = append(got, "H:"+r.stack)
+		} else {
+			got = append(got, r.e.it.Key)
+		}
+	}
+	// whole-word rows first, their own order between equals; the scattered match last in its stack
+	if want := "H:work WORK-3 WORK-9 H:home HOME-1"; strings.Join(got, " ") != want {
+		t.Errorf("rows = %v, want %s", got, want)
+	}
+	// without a query the list is the list: config order, nothing ranked
+	got = got[:0]
+	for _, r := range buildRows(entries, "", s, k, m) {
+		if r.kind == "issue" {
+			got = append(got, r.e.it.Key)
+		}
+	}
+	if strings.Join(got, " ") != "WORK-9 WORK-3 HOME-1" {
+		t.Errorf("unfiltered rows = %v", got)
 	}
 }

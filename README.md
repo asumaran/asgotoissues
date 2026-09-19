@@ -83,6 +83,10 @@ remembered; the list takes a quarter of the width by default), `enter` opens the
 issue in the browser, a click selects an issue, and `esc` closes (so does
 `q` while the filter is empty).
 
+With a query the list is a search result: the best match comes first, with
+its group on top, and the cursor starts on it. Rows that match equally well
+stay in their usual order, most recently updated first.
+
 ## Behavior notes
 
 - Jira: one search per stack (`assignee = currentUser() AND

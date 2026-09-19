@@ -169,7 +169,13 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
 - Search corpus: summary + key/number + status/type/project/stack/parent
   and the provider's meta parts (repo, labels); exact key +30, exact number
   +20 (the part after the last `-` or `#`), key prefix with `-` or `#` +10, exact
-  stack/project +10, key hit +2, ties broken by newer `updated`.
+  stack/project +10, key hit +2.
+- **A query makes the list a search result**: tickets are ranked, best match
+  first, the stack that holds it on top with its tickets kept together, and
+  the cursor sits on the first one (`rank` in `rank.go`, the same file in
+  every picker of the family). Equal scores go to the newer `updated`. A score
+  says how good the match is and nothing about the length of the text
+  (`match.go`). Without a query the order is the one above.
 
 ## Testing
 

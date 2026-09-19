@@ -7,6 +7,7 @@ package main
 // sub-tasks. Only summary matches produce highlight indexes.
 
 import (
+	"sort"
 	"strings"
 )
 
@@ -95,47 +96,41 @@ func matchBonus(e *entry, h hit, q string) int {
 }
 
 // buildRows turns entries into display rows: a header per stack, then its
-// tickets. When filtering, only matching tickets (and their headers) survive.
+// tickets. When filtering, only matching tickets (and their headers) survive
+// and they are ranked: best match first, the stack that holds it on top.
 func buildRows(entries []*entry, q string, summaries, keys, metas []string) []row {
 	filtering := q != ""
 	var hits map[int]hit
 	if filtering {
 		hits = findHits(q, summaries, keys, metas)
 	}
-	var rows []row
-	last := ""
+	var issues []row
 	for i, e := range entries {
 		h, ok := hits[i]
 		if filtering && !ok {
 			continue
 		}
-		if e.it.Stack != last {
-			rows = append(rows, row{kind: "header", stack: e.it.Stack})
-			last = e.it.Stack
-		}
 		score := 0
 		if filtering {
 			score = h.score + matchBonus(e, h, q)
 		}
-		rows = append(rows, row{kind: "issue", e: e, stack: e.it.Stack, match: ok, score: score, idx: h.idx})
+		issues = append(issues, row{kind: "issue", e: e, stack: e.it.Stack, match: ok, score: score, idx: h.idx})
+	}
+	if filtering {
+		// equal scores: the most recently updated ticket first
+		sort.SliceStable(issues, func(i, j int) bool { return issues[i].e.it.Updated.After(issues[j].e.it.Updated) })
+		issues = rank(issues, func(r row) int { return r.score }, func(r row) string { return r.stack })
+	}
+	var rows []row
+	last := ""
+	for _, r := range issues {
+		if r.stack != last {
+			rows = append(rows, row{kind: "header", stack: r.stack})
+			last = r.stack
+		}
+		rows = append(rows, r)
 	}
 	return rows
-}
-
-// bestMatch returns the index of the highest-scored matching row; ties go to
-// the most recently updated ticket. -1 when nothing matches.
-func bestMatch(rows []row) int {
-	best := -1
-	for i, r := range rows {
-		if r.kind != "issue" || !r.match {
-			continue
-		}
-		if best == -1 || r.score > rows[best].score ||
-			(r.score == rows[best].score && r.e.it.Updated.After(rows[best].e.it.Updated)) {
-			best = i
-		}
-	}
-	return best
 }
 
 // firstIssue returns the index of the first selectable row, or -1.

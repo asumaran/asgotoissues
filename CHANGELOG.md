@@ -1,3 +1,7 @@
+## v0.5.0 (2026-09-19)
+
+* feat: support linux and share the release process (812dd29)
+
 ## v0.4.0 (2026-09-19)
 
 * refactor: rename gotojira to asgotoissues (1c02954)

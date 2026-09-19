@@ -85,6 +85,10 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   must degrade for a narrow list instead of truncating their last columns.
   `↑/↓` are left out of the help line so `esc/q quit` still fits next to
   `resize`.
+- **Mouse**: the wheel follows the pointer, as in asgitlog: over the list
+  (`overList`) it moves the selection through the same code as the arrow keys,
+  anywhere else it scrolls the description. A left click on a ticket row moves
+  the selection and never opens anything.
 - **Config source is asdev's file, on purpose**: one place to declare a
   stack's Jira site for both the Claude plugin and this picker. Only
   `stacks.<name>.jira.{base_url,type,email,api_token_env,username}` is read.

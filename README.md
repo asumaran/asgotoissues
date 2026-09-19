@@ -66,7 +66,8 @@ The filter input is focused on open — just type. Search is fuzzy over the
 summary, the key (`2099` finds `PLAT-2099`, so does `plat-2099`), and the
 status / type / project / stack / parent key (`uat`, `sub-task`, `shop`).
 `↑/↓` (or `ctrl+p`/`ctrl+n`) move between tickets, `shift+↓`/`shift+↑` (or
-PgDn/PgUp, or the mouse wheel) scroll the description, `shift+←`/`shift+→` resize the list (the split is
+PgDn/PgUp) scroll the description, the mouse wheel moves the selection over
+the list and scrolls the description anywhere else, `shift+←`/`shift+→` resize the list (the split is
 remembered; the list takes a quarter of the width by default), `enter` opens the
 ticket in the browser, a click selects a ticket, and `esc` closes (so does
 `q` while the filter is empty).

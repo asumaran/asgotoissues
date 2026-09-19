@@ -447,8 +447,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case tea.MouseWheelMsg:
-		// The wheel always scrolls the preview, wherever the pointer is; the
-		// list is driven by the keys and by clicking a row (see gotopr).
+		// Over the list the wheel moves the selection, as in asgitlog; anywhere
+		// else it scrolls the preview.
+		if m.overList(msg.X, msg.Y) {
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				return m.handleKey(tea.KeyPressMsg{Code: tea.KeyUp})
+			case tea.MouseWheelDown:
+				return m.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+			}
+			return m, nil
+		}
 		m.prevVP, _ = m.prevVP.Update(msg)
 		return m, nil
 
@@ -511,11 +520,15 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.updatePreview())
 }
 
+// overList reports whether a screen cell is inside the list.
+func (m *model) overList(x, y int) bool {
+	return x >= 1 && x <= m.listW() && y >= listY(false) && y < listY(false)+m.bodyH()
+}
+
 // handleClick moves the selection to the ticket row under a left click on the
 // list. It never opens the ticket: that stays on enter.
 func (m model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	if msg.Button != tea.MouseLeft || msg.X < 1 || msg.X > m.listW() ||
-		msg.Y < listY(false) || msg.Y >= listY(false)+m.bodyH() {
+	if msg.Button != tea.MouseLeft || !m.overList(msg.X, msg.Y) {
 		return m, nil
 	}
 	i := msg.Y - listY(false) + m.listVP.YOffset()

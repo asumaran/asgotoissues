@@ -216,3 +216,28 @@ func TestResizeList(t *testing.T) {
 		t.Errorf("split should clamp at %d, got %d", splitMax, m.split)
 	}
 }
+
+// TestMouseWheelFollowsThePointer: over the list the wheel moves the
+// selection, as in asgitlog; anywhere else it scrolls the preview.
+func TestMouseWheelFollowsThePointer(t *testing.T) {
+	next, _ := testModel(t).Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m := next.(model)
+	wheel := func(x int, b tea.MouseButton) {
+		next, _ := m.Update(tea.MouseWheelMsg{X: x, Y: listY(false), Button: b})
+		m = next.(model)
+	}
+	first := m.cursor
+	wheel(2, tea.MouseWheelDown)
+	if m.cursor <= first {
+		t.Errorf("wheel down over the list: cursor %d -> %d", first, m.cursor)
+	}
+	wheel(2, tea.MouseWheelUp)
+	if m.cursor != first {
+		t.Errorf("wheel up over the list: cursor = %d, want %d", m.cursor, first)
+	}
+	m.prevVP.SetContent(strings.Repeat("line\n", 200))
+	wheel(m.listW()+10, tea.MouseWheelDown)
+	if m.cursor != first || m.prevVP.YOffset() == 0 {
+		t.Errorf("wheel over the preview: cursor = %d, preview at %d", m.cursor, m.prevVP.YOffset())
+	}
+}

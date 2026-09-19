@@ -1,3 +1,10 @@
+## v0.6.0 (2026-09-19)
+
+* feat(ui): mark matches like asgitlog, selected row too (cf4efd9)
+* feat(ui): show the list's position under the list (68931ec)
+* feat(providers): list github issues next to jira (203ddad)
+* ci: spend less time on CI and on releases (bc63287)
+
 ## v0.5.0 (2026-09-19)
 
 * feat: support linux and share the release process (812dd29)

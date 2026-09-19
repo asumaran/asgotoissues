@@ -161,7 +161,9 @@ def opened():
 
 # One frame (see frame.go): top border with the counter, input, main edge,
 # list | preview, bottom edge, help, border. There is no context line.
-def listw(): return max((COLS - 2) * 38 // 100, 24)
+def listw(): return max(COLS - 3 - (COLS - 2) * 75 // 100, 10)   # the default split: list 25%, preview 75%
+def divider(f): return next(l for l in f if l.startswith("├") and "┬" in l).index("┬")
+SHIFT_RIGHT, SHIFT_LEFT = b"\x1b[1;2C", b"\x1b[1;2D"
 def left(f):  return [l[1:1 + listw()].rstrip() for l in f[3:-3] if l[1:1 + listw()].strip()]
 def prompt(f): return f[1].strip("│ ").rstrip()
 def counter(f): return f[0].strip("╭╮─ ")
@@ -207,5 +209,20 @@ s.start("gotojira (dev) ❯")
 s.send(DOWN, 0.3)
 os.write(s.master, ESC); s.pump(0.4)
 check(s.finish() == 0 and opened() == [], "esc quits and opens nothing")
+
+# ---------- run 4: the divider moves and stays where it was left ----------
+s = session()
+f = s.start("gotojira (dev) ❯"); at = divider(f)
+f = s.send(SHIFT_RIGHT, 0.6); grown = divider(f)
+check(grown > at and all(len(l) == COLS for l in f), "shift+right grows the list: %d -> %d" % (at, grown))
+f = s.send(SHIFT_LEFT, 0.6)
+check(divider(f) == at, "shift+left shrinks it back: %d" % divider(f))
+s.send(SHIFT_RIGHT, 0.6)
+os.write(s.master, ESC); s.pump(0.4); s.finish()
+s = session()
+f = s.start("gotojira (dev) ❯")
+check(divider(f) == grown, "the next run opens with the same split: %d" % divider(f))
+s.send(SHIFT_LEFT, 0.6)
+os.write(s.master, ESC); s.pump(0.4); s.finish()
 
 done()

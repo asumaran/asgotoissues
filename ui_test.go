@@ -176,3 +176,43 @@ func TestQQuitsOnlyWithEmptyFilter(t *testing.T) {
 		t.Errorf("filter = %q, want q typed as text", got)
 	}
 }
+
+// TestResizeList: shift+arrows move the divider, the frame still fits, and
+// the position is there for the next run.
+func TestResizeList(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	next, _ := testModel(t).Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m := next.(model)
+	m.split = splitDefault
+	m.resize()
+	w := m.listW()
+	shift := func(code rune) {
+		next, _ := m.Update(tea.KeyPressMsg{Code: code, Mod: tea.ModShift})
+		m = next.(model)
+	}
+
+	shift(tea.KeyRight)
+	if m.listW() <= w || m.split != splitDefault-splitStep || loadSplit(stateDir()) != m.split {
+		t.Errorf("grow: list %d -> %d, split=%d, saved=%d", w, m.listW(), m.split, loadSplit(stateDir()))
+	}
+	if m.listVP.Width() != m.listW() || m.prevVP.Width() != m.prevW() {
+		t.Errorf("viewports %d | %d, want %d | %d", m.listVP.Width(), m.prevVP.Width(), m.listW(), m.prevW())
+	}
+	for i, l := range strings.Split(m.View().Content, "\n") {
+		if got := ansi.StringWidth(l); got != m.width {
+			t.Errorf("line %d is %d cells after the resize, want %d", i, got, m.width)
+		}
+	}
+
+	shift(tea.KeyLeft)
+	shift(tea.KeyLeft)
+	if m.listW() >= w || m.split != splitDefault+splitStep {
+		t.Errorf("shrink: list %d -> %d, split=%d", w, m.listW(), m.split)
+	}
+	for range 10 {
+		shift(tea.KeyLeft)
+	}
+	if m.split != splitMax {
+		t.Errorf("split should clamp at %d, got %d", splitMax, m.split)
+	}
+}

@@ -1,6 +1,6 @@
 id = "asumaran.gotojira"
 name = "gotojira"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.7.5"
 description = "Jump to your open Jira tickets across every configured stack"
 platforms = ["macos"]

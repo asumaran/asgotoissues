@@ -78,12 +78,14 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   asgitlog introduced and every picker of the family follows (`frame.go`, the
   same file in each repo): the filter input (the border over it carries the
   matches/total counter and the refresh mark), the main section (list and
-  preview split by a divider; its bottom edge carries the preview's scroll
-  position), and the help. A context line on top is only for what the rest of
-  the screen cannot say (asgitlog: repo and branch); a title is not context,
-  so there is none here. The stacks already head their groups in the list. The
-  list starts on screen row `listY`, one cell in from the left side, which is
-  what the click-to-row math uses. Errors and notices take the help line.
+  preview split by a divider; its bottom edge carries the list's position on
+  the left and the preview's scroll position on the right, each only while its
+  side overflows), and the help. A context line on top is only for what the
+  rest of the screen cannot say (asgitlog: repo and branch); a title is not
+  context, so there is none here. The stacks already head their groups in the
+  list. The list starts on screen row `listY`, one cell in from the left side,
+  which is what the click-to-row math uses. Errors and notices take the help
+  line.
 - **Resizable list**: `shift+←/→` move the divider in 5% steps, as in
   asgitlog. The setting is the PREVIEW's share of the width, clamped to
   30-85 and saved as `split-columns` in the state dir; the default is 75

@@ -3,8 +3,8 @@ package main
 // The screen is one rounded frame of sections split by shared edges, the
 // layout asgitlog introduced: the filter input (the edge over it carries the
 // matches/total counter), the main section (list and preview, split by a
-// divider; its bottom edge carries the preview's scroll position) and the
-// help. Neighbours share an edge, so no line is spent on a border of their
+// divider; its bottom edge carries the list's position on the left and the
+// preview's on the right, each only while its side overflows) and the help. Neighbours share an edge, so no line is spent on a border of their
 // own.
 //
 // A context line on top is optional and only for what the rest of the screen
@@ -62,10 +62,11 @@ func frameHead(w int, context, counter, input string) []string {
 	}
 }
 
-// hline draws a horizontal border w cells wide between the corners l and r,
-// with optional (already styled) texts set into it near each end.
+// hline draws a horizontal border w cells wide between the corners l and r
+// (either may be empty), with optional (already styled) texts set into it
+// near each end.
 func hline(w int, l, r, left, right string) string {
-	inner := max(0, w-2)
+	inner := max(0, w-ansi.StringWidth(l)-ansi.StringWidth(r))
 	if left != "" {
 		left = " " + left + " "
 	}
@@ -110,11 +111,34 @@ func scrollPos(vp *viewport.Model) string {
 	return stDim.Render(strconv.Itoa(min(total, vp.YOffset()+vp.Height())) + "/" + strconv.Itoa(total))
 }
 
+// listPos is the list's position for the same edge: the last visible item
+// out of the listed ones, empty while everything fits. isItem tells the item
+// lines from the rest (group headers), which do not count, so the total
+// agrees with the counter over the input; nil means every line is an item.
+func listPos(vp *viewport.Model, isItem func(line int) bool) string {
+	lines := vp.TotalLineCount()
+	if lines <= vp.Height() {
+		return ""
+	}
+	seen, total := 0, 0
+	for i := 0; i < lines; i++ {
+		if isItem != nil && !isItem(i) {
+			continue
+		}
+		total++
+		if i < vp.YOffset()+vp.Height() {
+			seen++
+		}
+	}
+	return stDim.Render(strconv.Itoa(seen) + "/" + strconv.Itoa(total))
+}
+
 // splitMain is the main section with a list of listW cells and a preview of
 // prevW cells (padding included) side by side: the top edge, one line per
-// list row, and the bottom edge carrying pos. list must hold lines of exactly
-// listW cells; preview lines are padded here.
-func splitMain(list, preview []string, listW, prevW int, pos string) []string {
+// list row, and the bottom edge carrying listPos under the list and pos under
+// the preview. list must hold lines of exactly listW cells; preview lines are
+// padded here.
+func splitMain(list, preview []string, listW, prevW int, listPos, pos string) []string {
 	side := stDim.Render("│")
 	out := make([]string, 0, len(list)+2)
 	out = append(out, stDim.Render("├"+strings.Repeat("─", listW))+hline(prevW+2, "┬", "┤", "", ""))
@@ -125,5 +149,5 @@ func splitMain(list, preview []string, listW, prevW int, pos string) []string {
 		}
 		out = append(out, side+list[i]+side+fit(" "+d, prevW)+side)
 	}
-	return append(out, stDim.Render("├"+strings.Repeat("─", listW))+hline(prevW+2, "┴", "┤", "", pos))
+	return append(out, hline(listW+1, "├", "", listPos, "")+hline(prevW+2, "┴", "┤", "", pos))
 }

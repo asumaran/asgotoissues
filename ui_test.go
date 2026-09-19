@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -239,5 +240,46 @@ func TestMouseWheelFollowsThePointer(t *testing.T) {
 	wheel(m.listW()+10, tea.MouseWheelDown)
 	if m.cursor != first || m.prevVP.YOffset() == 0 {
 		t.Errorf("wheel over the preview: cursor = %d, preview at %d", m.cursor, m.prevVP.YOffset())
+	}
+}
+
+func TestListPositionShowsOnlyWhileTheListOverflows(t *testing.T) {
+	bottomEdge := func(m model) string {
+		for _, l := range strings.Split(ansi.Strip(m.render()), "\n") {
+			if strings.HasPrefix(l, "├") && strings.Contains(l, "┴") {
+				return l
+			}
+		}
+		return ""
+	}
+	m := testModel(t)
+	if edge := bottomEdge(m); strings.ContainsAny(edge, "0123456789") {
+		t.Errorf("a list that fits says nothing: %q", edge)
+	}
+	var issues []issue
+	for i := 1; i <= 30; i++ {
+		stack := "alpha"
+		if i > 20 {
+			stack = "beta"
+		}
+		issues = append(issues, issue{Key: "K-" + strconv.Itoa(i), Stack: stack, URL: "u" + strconv.Itoa(i), Summary: "s", Created: time.Unix(int64(1000-i), 0)})
+	}
+	m = newModel([]stack{jiraStack("alpha"), jiraStack("beta")}, issueCache{FetchedAt: time.Now(), Issues: issues}, false, "> ")
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 16})
+	m = res.(model)
+	h := m.listVP.Height()
+	// the alpha header takes one of the visible lines and is not counted
+	if edge := bottomEdge(m); !strings.HasPrefix(edge, "├─ "+strconv.Itoa(h-1)+"/30 ─") {
+		t.Errorf("edge = %q, want %d/30 on the list's side", edge, h-1)
+	}
+	for i := 0; i < 40; i++ {
+		res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m = res.(model)
+	}
+	if edge := bottomEdge(m); !strings.HasPrefix(edge, "├─ 30/30 ─") {
+		t.Errorf("at the bottom the edge = %q, want 30/30", edge)
+	}
+	if w := ansi.StringWidth(bottomEdge(m)); w != 120 {
+		t.Errorf("the edge is %d cells wide, want 120", w)
 	}
 }

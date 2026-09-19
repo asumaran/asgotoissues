@@ -555,7 +555,7 @@ func (m model) render() string {
 		pos = scrollPos(&m.prevVP)
 	}
 	out = append(out, splitMain(m.listLines(), strings.Split(m.rightColumn(), "\n"),
-		m.listW(), m.detailsW(), pos)...)
+		m.listW(), m.detailsW(), listPos(&m.listVP, func(i int) bool { return i < len(m.rows) && m.rows[i].kind != "header" }), pos)...)
 	out = append(out, framed(w, m.footer()), hline(w, "╰", "╯", "", ""))
 	return strings.Join(out, "\n")
 }

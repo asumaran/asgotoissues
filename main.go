@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/help"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -48,31 +46,8 @@ func main() {
 		return
 	}
 
-	m := model{
-		stacks:       stacks,
-		cache:        cache,
-		refreshing:   stale,
-		pending:      len(stacks),
-		ti:           newFilterInput(promptText()),
-		listVP:       viewport.New(viewport.WithWidth(50), viewport.WithHeight(20)),
-		prevVP:       viewport.New(viewport.WithWidth(40), viewport.WithHeight(17)),
-		help:         help.New(),
-		keys:         defaultKeys(),
-		renders:      map[string]string{},
-		previewStyle: "dark",
-		width:        94,
-		height:       24,
-	}
-	if !stale {
-		m.pending = 0
-	}
-	m.setEntries(cache.Issues)
-	m.applyFilter()
-	m.resize()
-	m.renderList()
-
-	// The alt screen is declared per frame by View().
-	res, err := tea.NewProgram(m).Run()
+	// Alt screen and mouse mode are declared per frame by View().
+	res, err := tea.NewProgram(newModel(stacks, cache, stale, promptText())).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

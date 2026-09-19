@@ -38,6 +38,9 @@ Files are split by concern but everything stays in `package main`:
   freshness debounce.
 - `filter.go` — entries, corpora, fuzzy hits, `matchBonus` ranking, row
   building, header-skipping navigation.
+- `frame.go` — the single-frame layout shared by the family: `hline`, `fit`,
+  `framed`, `frameHead`, `splitMain`, `scrollPos` and the section rows (`mainY`,
+  `listY`, `frameRows`, each with or without the optional context line).
 - `ui.go` — the bubbletea model/Update/View, styles, `openInBrowser`.
 - `preview.go` — glamour rendering as a `tea.Cmd`, per-(URL,width,updated)
   render cache, instant non-glamour header.
@@ -59,6 +62,16 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
 
 ## Behaviour / decisions
 
+- **Layout**: one rounded frame of sections split by shared edges, the layout
+  asgitlog introduced and every picker of the family follows (`frame.go`, the
+  same file in each repo): the filter input (the border over it carries the
+  matches/total counter and the refresh mark), the main section (list and
+  preview split by a divider; its bottom edge carries the preview's scroll
+  position), and the help. A context line on top is only for what the rest of
+  the screen cannot say (asgitlog: repo and branch); a title is not context,
+  so there is none here. The stacks already head their groups in the list. The
+  list starts on screen row `listY`, one cell in from the left side, which is
+  what the click-to-row math uses. Errors and notices take the help line.
 - **Config source is asdev's file, on purpose**: one place to declare a
   stack's Jira site for both the Claude plugin and this picker. Only
   `stacks.<name>.jira.{base_url,type,email,api_token_env,username}` is read.
@@ -74,7 +87,8 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `issuecache.json`; snapshots fresher than 60s skip the refresh. Stacks
   refresh concurrently (one tea.Cmd each); a failed stack keeps its cached
   tickets and the snapshot's `FetchedAt` is NOT advanced, so the next open
-  retries. Errors surface dimmed in the footer, never as a modal.
+  retries. Errors take the help line, never a modal; the refresh mark sits
+  next to the counter.
 - **Selection is deliberately just "open in browser"** (`open` on macOS,
   `xdg-open` elsewhere, `GOTOJIRA_OPEN_CMD` override), executed after quit
   because quitting closes the popup. Jumping to a checkout / creating a

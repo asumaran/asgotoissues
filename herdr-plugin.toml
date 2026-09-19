@@ -19,5 +19,5 @@ id = "picker"
 title = "Jira"
 placement = "popup"
 width = "85%"
-height = "70%"
+height = "90%"
 command = ["./gotojira"]

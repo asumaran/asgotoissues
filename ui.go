@@ -41,6 +41,8 @@ var (
 	stDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	stTitle   = lipgloss.NewStyle().Bold(true)
 	stKey     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	stCount   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	stError   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 	stTodo    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	stDoing   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	stBlocked = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
@@ -86,10 +88,12 @@ func defaultKeys() keyMap {
 		Up:       key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("↑/^p", "up")),
 		Down:     key.NewBinding(key.WithKeys("down", "ctrl+n"), key.WithHelp("↓/^n", "down")),
 		Select:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open in browser")),
-		Cancel:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "cancel")),
+		Cancel:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc/q", "quit")),
 		PrevUp:   key.NewBinding(key.WithKeys("shift+up", "pgup"), key.WithHelp("⇧↑", "")),
 		PrevDown: key.NewBinding(key.WithKeys("shift+down", "pgdown"), key.WithHelp("⇧↓", "scroll desc")),
-		Filter:   key.NewBinding(key.WithKeys(), key.WithHelp("type", "search")),
+		// Help-only entry: a binding without keys is disabled and the help
+		// bubble would skip it. Nothing ever matches against it.
+		Filter: key.NewBinding(key.WithKeys("type"), key.WithHelp("type", "filter")),
 	}
 }
 
@@ -131,6 +135,33 @@ type model struct {
 	openURL string // opened in the browser after quit ("" = none)
 }
 
+// newModel builds the model from the cached snapshot. stale starts the
+// background refresh of every stack from Init.
+func newModel(stacks []stack, cache issueCache, stale bool, prompt string) model {
+	m := model{
+		stacks:       stacks,
+		cache:        cache,
+		refreshing:   stale,
+		ti:           newFilterInput(prompt),
+		listVP:       viewport.New(viewport.WithWidth(50), viewport.WithHeight(20)),
+		prevVP:       viewport.New(viewport.WithWidth(40), viewport.WithHeight(17)),
+		help:         help.New(),
+		keys:         defaultKeys(),
+		renders:      map[string]string{},
+		previewStyle: "dark",
+		width:        94,
+		height:       24,
+	}
+	if stale {
+		m.pending = len(stacks)
+	}
+	m.setEntries(cache.Issues)
+	m.applyFilter()
+	m.resize()
+	m.renderList()
+	return m
+}
+
 func (m *model) currentRow() *row {
 	if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == "issue" {
 		return &m.rows[m.cursor]
@@ -138,29 +169,21 @@ func (m *model) currentRow() *row {
 	return nil
 }
 
-func (m *model) listW() int {
-	w := (m.width - 3) * 38 / 100
-	if w < 24 {
-		w = 24
-	}
-	return w
-}
+// innerW is the width inside the frame's sides.
+func (m *model) innerW() int { return max(20, m.width-2) }
 
-func (m *model) prevW() int {
-	w := m.width - m.listW() - 3
-	if w < 10 {
-		w = 10
-	}
-	return w
-}
+// listW is the list's share of the main section; the divider and the preview
+// take the rest.
+func (m *model) listW() int { return max(24, m.innerW()*38/100) }
 
-func (m *model) bodyH() int {
-	h := m.height - 2 // input + footer
-	if h < 1 {
-		h = 1
-	}
-	return h
-}
+// detailsW is the preview's area, including the cell of padding on each
+// side; prevW is the text width inside it.
+func (m *model) detailsW() int { return max(12, m.innerW()-1-m.listW()) }
+func (m *model) prevW() int    { return max(10, m.detailsW()-2) }
+
+// bodyH is the height of the main section: everything but the frame's own
+// lines and the help.
+func (m *model) bodyH() int { return max(1, m.height-frameRows(false)-1) }
 
 func (m *model) resize() {
 	m.listVP.SetWidth(m.listW())
@@ -171,7 +194,7 @@ func (m *model) resize() {
 		prevH = 1
 	}
 	m.prevVP.SetHeight(prevH)
-	m.help.SetWidth(m.width)
+	m.help.SetWidth(max(0, m.width-4))
 }
 
 func (m *model) setEntries(issues []issue) {
@@ -408,6 +431,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
+	case tea.MouseWheelMsg:
+		// The wheel always scrolls the preview, wherever the pointer is; the
+		// list is driven by the keys and by clicking a row (see gotopr).
+		m.prevVP, _ = m.prevVP.Update(msg)
+		return m, nil
+
+	case tea.MouseClickMsg:
+		return m.handleClick(msg)
+
 	default:
 		var cmd tea.Cmd
 		m.ti, cmd = m.ti.Update(msg)
@@ -417,6 +449,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case msg.String() == "q" && m.ti.Value() == "":
+		// q quits only while the filter is empty; otherwise it is text.
+		return m, tea.Quit
 	case key.Matches(msg, m.keys.Cancel):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Select):
@@ -457,19 +492,71 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, m.updatePreview())
 }
 
-// View declares the frame: alt screen, no mouse mode.
+// handleClick moves the selection to the ticket row under a left click on the
+// list. It never opens the ticket: that stays on enter.
+func (m model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if msg.Button != tea.MouseLeft || msg.X < 1 || msg.X > m.listW() ||
+		msg.Y < listY(false) || msg.Y >= listY(false)+m.bodyH() {
+		return m, nil
+	}
+	i := msg.Y - listY(false) + m.listVP.YOffset()
+	if i < 0 || i >= len(m.rows) || m.rows[i].kind != "issue" || i == m.cursor {
+		return m, nil
+	}
+	m.cursor = i
+	m.renderList()
+	return m, m.updatePreview()
+}
+
+// View declares the screen: alt screen and cell-motion mouse reports.
 func (m model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
-// render builds the frame text; the tests assert on it.
+// render stacks the sections in one frame (see frame.go); the tests assert on
+// it. There is no context line: the stacks already head their groups.
 func (m model) render() string {
-	right := m.rightColumn()
-	sep := stDim.Render(strings.TrimRight(strings.Repeat("│\n", m.bodyH()), "\n"))
-	body := lipgloss.JoinHorizontal(lipgloss.Top, m.listVP.View(), " ", sep, " ", right)
-	return m.ti.View() + "\n" + body + "\n" + m.footer()
+	w := m.width
+	out := frameHead(w, "", m.counter(), m.ti.View())
+	pos := ""
+	if m.currentRow() != nil {
+		pos = scrollPos(&m.prevVP)
+	}
+	out = append(out, splitMain(m.listLines(), strings.Split(m.rightColumn(), "\n"),
+		m.listW(), m.detailsW(), pos)...)
+	out = append(out, framed(w, m.footer()), hline(w, "╰", "╯", "", ""))
+	return strings.Join(out, "\n")
+}
+
+// counter is the matches/total count, with the refresh mark.
+func (m model) counter() string {
+	n := 0
+	for _, r := range m.rows {
+		if r.kind == "issue" {
+			n++
+		}
+	}
+	s := stCount.Render(strconv.Itoa(n) + "/" + strconv.Itoa(len(m.entries)))
+	if m.refreshing {
+		s += stDim.Render(" refreshing…")
+	}
+	return s
+}
+
+// listLines is the list as exactly bodyH lines of listW cells.
+func (m model) listLines() []string {
+	lines := strings.Split(m.listVP.View(), "\n")
+	for len(lines) < m.bodyH() {
+		lines = append(lines, "")
+	}
+	lines = lines[:m.bodyH()]
+	for i, l := range lines {
+		lines[i] = fit(l, m.listW())
+	}
+	return lines
 }
 
 func (m model) rightColumn() string {
@@ -487,19 +574,13 @@ func (m model) rightColumn() string {
 	return previewHeader(r.e.it, w) + "\n\n" + m.prevVP.View()
 }
 
+// footer is the key help, or the network error while there is one. The
+// refresh mark lives next to the counter.
 func (m model) footer() string {
-	status := ""
-	switch {
-	case m.netErr != "":
-		status = truncate(m.netErr, m.width/2)
-	case m.refreshing:
-		status = "refreshing…"
+	if m.netErr != "" {
+		return stError.Render(truncate(m.netErr, max(0, m.width-4)))
 	}
-	f := m.help.View(m.keys)
-	if status != "" {
-		f += "  " + stDim.Render(status)
-	}
-	return f
+	return truncate(m.help.View(m.keys), max(0, m.width-4))
 }
 
 // newFilterInput builds the focused filter textinput. The prompt string

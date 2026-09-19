@@ -66,8 +66,9 @@ The filter input is focused on open — just type. Search is fuzzy over the
 summary, the key (`2099` finds `PLAT-2099`, so does `plat-2099`), and the
 status / type / project / stack / parent key (`uat`, `sub-task`, `shop`).
 `↑/↓` (or `ctrl+p`/`ctrl+n`) move between tickets, `shift+↓`/`shift+↑` (or
-PgDn/PgUp) scroll the description, `enter` opens the ticket in the browser,
-`esc` closes.
+PgDn/PgUp, or the mouse wheel) scroll the description, `enter` opens the
+ticket in the browser, a click selects a ticket, and `esc` closes (so does
+`q` while the filter is empty).
 
 ## Behavior notes
 
@@ -81,7 +82,7 @@ PgDn/PgUp) scroll the description, `enter` opens the ticket in the browser,
   popup renders instantly from the last snapshot while the stacks refresh
   concurrently in the background (skipped entirely when the snapshot is
   under 60s old). If a stack fails (offline, expired token) its cached
-  tickets stay listed, the error shows dimmed in the footer, and the
+  tickets stay listed, the error takes the help line, and the
   snapshot is revalidated again on the next open.
 - Keys are colored by status: green while in progress, dim for to-do, red
   when the status name contains "block".

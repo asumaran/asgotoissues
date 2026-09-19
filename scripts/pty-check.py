@@ -10,7 +10,7 @@ nothing is fetched) and a logging stub instead of the browser
 
 Usage: scripts/pty-check.py ./gotojira   (needs python3 + pyte)
 """
-NAME, ROWS, COLS = "gotojira", 16, 150
+NAME, ROWS, COLS = "gotojira", 18, 150
 import atexit, fcntl, json, os, pty, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time
 import pyte
 
@@ -159,30 +159,49 @@ def opened():
     time.sleep(0.3)
     return open(open_log).read().splitlines() if os.path.exists(open_log) else []
 
-def listw(): return max((COLS - 3) * 38 // 100, 24)
-def left(f):  return [l[:listw()].rstrip() for l in f[1:-1] if l[:listw()].strip()]
+# One frame (see frame.go): top border with the counter, input, main edge,
+# list | preview, bottom edge, help, border. There is no context line.
+def listw(): return max((COLS - 2) * 38 // 100, 24)
+def left(f):  return [l[1:1 + listw()].rstrip() for l in f[3:-3] if l[1:1 + listw()].strip()]
+def prompt(f): return f[1].strip("│ ").rstrip()
+def counter(f): return f[0].strip("╭╮─ ")
 
 print("== gotojira pty driver (%dx%d) ==" % (COLS, ROWS))
 
 # ---------- run 1: grouped list, preview, filter by number, open ----------
 s = session()
 f = s.start("gotojira (dev) ❯"); dump("open", f)
-check(f[0].strip() == "gotojira (dev) ❯", "prompt line is clean: %r" % f[0])
+check(prompt(f) == "gotojira (dev) ❯", "prompt line is clean: %r" % f[1])
+check(f[0].startswith("╭") and f[-1].startswith("╰") and "┬" in f[2],
+      "one frame: input right under the top border, no title line")
+check(counter(f) == "3/3" and "type filter" in f[-2] and "esc/q quit" in f[-2], "counter %r and help %r" % (counter(f), f[-2]))
 check(b"\x1b[?1049h" in s.raw, "program entered the alt screen")
 rows = left(f)
 check(any("acme" in r for r in rows) and any("globex" in r for r in rows), "tickets are grouped by stack: %r" % rows)
 check(sum("PLAT-" in r or "SHOP-" in r for r in rows) == 3, "every cached ticket is listed")
 body = "\n".join(f)
 check("PLAT-2099" in body and "Context" in body and "add the guard" in body, "preview renders the description")
-check("rgb:" not in f[0], "the background reply is not typed into the filter")
+check("rgb:" not in f[1], "the background reply is not typed into the filter")
+# SGR press+release on the third list line (acme, PLAT-2099, PLAT-2098): 1-based column 5, line 3+2+1
+f = s.send(b"\x1b[<0;5;6M\x1b[<0;5;6m", 0.5)
+rows = left(f)
+check(any(r.startswith("▌") and "PLAT-2098" in r for r in rows) and s.proc.poll() is None,
+      "a click selects the ticket without opening it: %r" % rows)
 f = s.send(b"602", 0.6); dump("filtered", f)
 rows = left(f)
 check(any("SHOP-602" in r for r in rows) and not any("PLAT-" in r for r in rows), "a ticket number filters: %r" % rows)
+check(counter(f) == "1/3", "the counter follows the filter: %r" % counter(f))
 s.send(ENTER, 0.3)
 check(s.finish() == 0, "clean exit after enter")
 check(opened() == ["https://globex.example/browse/SHOP-602"], "enter opens the ticket in the browser: %r" % opened())
 
-# ---------- run 2: esc cancels and opens nothing ----------
+# ---------- run 2: q quits with an empty filter ----------
+s = session()
+s.start("gotojira (dev) ❯")
+os.write(s.master, b"q"); s.pump(0.4)
+check(s.finish() == 0 and opened() == [], "q quits with an empty filter and opens nothing")
+
+# ---------- run 3: esc cancels and opens nothing ----------
 s = session()
 s.start("gotojira (dev) ❯")
 s.send(DOWN, 0.3)

@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"charm.land/bubbles/v2/help"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func testModel(t *testing.T) model {
@@ -19,22 +18,9 @@ func testModel(t *testing.T) model {
 		{Key: "BETA-7", Stack: "beta", URL: "https://b.example/browse/BETA-7", Summary: "update readme",
 			Status: "To Do", StatusCat: "To Do", Type: "Story", Updated: time.Unix(100, 0)},
 	}
-	m := model{
-		stacks:  []stack{{Name: "alpha"}, {Name: "beta"}},
-		cache:   issueCache{FetchedAt: time.Now(), Issues: issues},
-		ti:      newFilterInput("> "),
-		listVP:  viewport.New(viewport.WithWidth(50), viewport.WithHeight(20)),
-		prevVP:  viewport.New(viewport.WithWidth(40), viewport.WithHeight(17)),
-		help:    help.New(),
-		keys:    defaultKeys(),
-		renders: map[string]string{},
-		width:   120,
-		height:  30,
-	}
-	m.setEntries(issues)
-	m.applyFilter()
-	m.resize()
-	m.renderList()
+	m := newModel([]stack{{Name: "alpha"}, {Name: "beta"}}, issueCache{FetchedAt: time.Now(), Issues: issues}, false, "> ")
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = res.(model)
 	return m
 }
 
@@ -132,4 +118,61 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// TestFrameGeometry pins the single-frame layout: exactly height lines, each
+// exactly width cells, sections where the click math expects them.
+func TestFrameGeometry(t *testing.T) {
+	m := testModel(t)
+	lines := strings.Split(m.render(), "\n")
+	if len(lines) != m.height {
+		t.Errorf("%d lines, want %d", len(lines), m.height)
+	}
+	for i, l := range lines {
+		if w := ansi.StringWidth(l); w != m.width {
+			t.Errorf("line %d is %d cells, want %d: %q", i, w, m.width, ansi.Strip(l))
+		}
+	}
+	plain := strings.Split(ansi.Strip(m.render()), "\n")
+	if !strings.HasPrefix(plain[0], "╭") || !strings.HasPrefix(plain[len(plain)-1], "╰") ||
+		!strings.Contains(plain[mainY(false)], "┬") || !strings.Contains(plain[0], "2/2") ||
+		!strings.HasPrefix(plain[1], "│ > ") {
+		t.Errorf("frame sections misplaced:\n%s", strings.Join(plain, "\n"))
+	}
+	if help := plain[len(plain)-2]; !strings.Contains(help, "type filter") || !strings.Contains(help, "esc/q quit") {
+		t.Errorf("help line = %q", help)
+	}
+}
+
+func TestClickSelectsTicketRow(t *testing.T) {
+	m := testModel(t)
+	// rows: header(alpha) PLAT-100 header(beta) BETA-7
+	click := func(x, y int) tea.MouseClickMsg { return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft} }
+	res, _ := m.Update(click(3, listY(false)+3))
+	got := res.(model)
+	if r := got.currentRow(); r == nil || r.e.it.Key != "BETA-7" || got.openURL != "" {
+		t.Fatalf("click must select BETA-7 without opening it: cursor=%d open=%q", got.cursor, got.openURL)
+	}
+	for _, c := range []tea.MouseClickMsg{click(3, listY(false)+2), click(got.listW()+10, listY(false)+1),
+		click(got.listW()+1, listY(false)+1), click(0, listY(false)+1), click(3, mainY(false)), click(3, 1)} {
+		res, _ = got.Update(c)
+		if res.(model).cursor != got.cursor {
+			t.Errorf("click %+v moved the cursor to %d", c, res.(model).cursor)
+		}
+	}
+}
+
+func TestQQuitsOnlyWithEmptyFilter(t *testing.T) {
+	_, cmd := testModel(t).handleKey(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if cmd == nil {
+		t.Fatal("q with an empty filter should quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("q cmd is not tea.Quit")
+	}
+	res, _ := testModel(t).handleKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	res, _ = res.(model).handleKey(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if got := res.(model).ti.Value(); got != "xq" {
+		t.Errorf("filter = %q, want q typed as text", got)
+	}
 }

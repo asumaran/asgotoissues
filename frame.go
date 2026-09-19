@@ -8,7 +8,7 @@ package main
 // own.
 //
 // A context line on top is optional and only for what the rest of the screen
-// cannot say (asgitlog: which repository and branch; gotonotes: which group
+// cannot say (asgitlog: which repository and branch; asgotonotes: which group
 // is being browsed). A title is not context. Without it the counter sits on
 // the frame's top border:
 //

@@ -1,7 +1,7 @@
 # Compiled binary (built locally or in CI; attached to GitHub Releases as an asset).
-/gotojira
-gotojira-darwin-*
-gotojira-linux-*
+/asgotoissues
+asgotoissues-darwin-*
+asgotoissues-linux-*
 
 # Release staging
 /dist/

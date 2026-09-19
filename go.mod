@@ -1,4 +1,4 @@
-module github.com/asumaran/gotojira
+module github.com/asumaran/asgotoissues
 
 go 1.25.8
 

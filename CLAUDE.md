@@ -4,16 +4,16 @@ Guidance for working in this repository.
 
 ## What this is
 
-`gotojira` is a herdr plugin popup that lists the Jira tickets assigned to
+`asgotoissues` is a herdr plugin popup that lists the Jira tickets assigned to
 the user (open, not Done) across every stack configured in
 `~/.claude/asdev.local.md`, grouped by stack, with fuzzy search and a
 glamour-rendered preview of the description (wiki markup → Markdown).
 Selecting a ticket opens it in the browser. Open, pick, exit — same
-lifecycle as `gotopr` and `herdr-goto`, which this repo is modeled on.
+lifecycle as `asgotopr` and `asgoto`, which this repo is modeled on.
 
-Distributed as a herdr plugin (`herdr plugin install asumaran/gotojira`; the
+Distributed as a herdr plugin (`herdr plugin install asumaran/asgotoissues`; the
 manifest's `[[build]]` runs `scripts/fetch-binary.sh`). Each GitHub Release
-attaches `gotojira-darwin-arm64`. There is no published library.
+attaches `asgotoissues-darwin-arm64`. There is no published library.
 
 ## Stack & layout
 
@@ -43,7 +43,7 @@ Files are split by concern but everything stays in `package main`:
   `listY`, `frameRows`, each with or without the optional context line).
 - `split.go` — the divider between the list and the preview: `loadSplit`,
   `saveSplit`, `stepSplit`, `splitWidths`. The file is copied, not imported:
-  the same one ships in gotochanged, gotosession, gotonotes and gotopr (all
+  the same one ships in asgotochanged, asgotosession, asgotonotes and asgotopr (all
   under github.com/asumaran), and there is no shared library. A pull request
   only needs to change it here; the maintainer ports the change to the other
   copies.
@@ -54,17 +54,17 @@ Files are split by concern but everything stays in `package main`:
 ## Build & run
 
 ```bash
-go build -o gotojira .    # plugin runs ./gotojira from the repo root
-./gotojira -dump          # stacks + tickets, no TTY (refreshes when stale)
-./gotojira -dump -query x # additionally prints filter scores
-./gotojira -dump -show KEY # prints the wiki → Markdown conversion of KEY
+go build -o asgotoissues .    # plugin runs ./asgotoissues from the repo root
+./asgotoissues -dump          # stacks + tickets, no TTY (refreshes when stale)
+./asgotoissues -dump -query x # additionally prints filter scores
+./asgotoissues -dump -show KEY # prints the wiki → Markdown conversion of KEY
 go vet ./... && go test ./...
-scripts/pty-check.py ./gotojira   # end-to-end TUI check on a pty (python3 + pyte)
-herdr plugin link ~/Developer/gotojira   # link does NOT run [[build]]; go build yourself
+scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 + pyte)
+herdr plugin link ~/Developer/asgotoissues   # link does NOT run [[build]]; go build yourself
 ```
 
 Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
-`asumaran.gotojira.open` → `scripts/open-pane.sh` → `herdr plugin pane open`.
+`asumaran.asgotoissues.open` → `scripts/open-pane.sh` → `herdr plugin pane open`.
 
 ## Behaviour / decisions
 
@@ -107,7 +107,7 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   retries. Errors take the help line, never a modal; the refresh mark sits
   next to the counter.
 - **Selection is deliberately just "open in browser"** (`open` on macOS,
-  `xdg-open` elsewhere, `GOTOJIRA_OPEN_CMD` override), executed after quit
+  `xdg-open` elsewhere, `ASGOTOISSUES_OPEN_CMD` override), executed after quit
   because quitting closes the popup. Jumping to a checkout / creating a
   worktree for a ticket was considered and rejected for v1.
 - **Never query the terminal behind bubbletea's back**: `Init` issues
@@ -133,14 +133,14 @@ merge fallback, wiki conversion, ranking, grouping, key handling, partial
 refresh failure, View content). `TestMain` points `HERDR_PLUGIN_STATE_DIR`
 at a temp dir so tests never touch the real cache. For end-to-end TUI
 verification without a TTY, drive the binary in a pty (answer OSC 10/11 +
-CSI 6n + DA1 queries, replay keystrokes, set `GOTOJIRA_OPEN_CMD` to a script
-that logs argv) — see herdr-goto's `scripts/demo/driver.py`.
+CSI 6n + DA1 queries, replay keystrokes, set `ASGOTOISSUES_OPEN_CMD` to a script
+that logs argv) — see asgoto's `scripts/demo/driver.py`.
 
-For end-to-end verification without a TTY, `scripts/pty-check.py ./gotojira`
+For end-to-end verification without a TTY, `scripts/pty-check.py ./asgotoissues`
 (python3 + `pyte`) spawns the binary on a pty, answers the terminal queries,
 replays keystrokes and asserts on pyte-rendered frames, in a throwaway sandbox
-(fake `HOME`, synthetic `GOTOJIRA_CONFIG`, empty netrc, a fresh synthetic
-ticket cache so nothing is fetched, a logging stub as `GOTOJIRA_OPEN_CMD`). The v2 renderer repaints with scroll regions, which pyte ignores, so the
+(fake `HOME`, synthetic `ASGOTOISSUES_CONFIG`, empty netrc, a fresh synthetic
+ticket cache so nothing is fetched, a logging stub as `ASGOTOISSUES_OPEN_CMD`). The v2 renderer repaints with scroll regions, which pyte ignores, so the
 driver forces a full redraw (pty resize + SIGWINCH) before reading a frame.
 
 ## Commits & branches
@@ -154,6 +154,6 @@ driver forces a full redraw (pty resize + SIGWINCH) before reading a frame.
 
 `scripts/release.sh <X.Y.Z>` — clean-tree + vet/build/test gate, CHANGELOG
 generation from commit subjects, manifest version sync, commit + tag + GitHub
-release; CI (`.github/workflows/release.yml`) attaches `gotojira-darwin-arm64`.
-Releasing never touches the linked plugin's `./gotojira`; rebuild locally to
+release; CI (`.github/workflows/release.yml`) attaches `asgotoissues-darwin-arm64`.
+Releasing never touches the linked plugin's `./asgotoissues`; rebuild locally to
 keep testing dev code.

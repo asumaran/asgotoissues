@@ -1,4 +1,4 @@
-# gotojira
+# asgotoissues
 
 A [herdr](https://github.com/asumaran/herdr) plugin popup that lists the Jira
 tickets assigned to you (open ones, not in the Done status category) across
@@ -6,20 +6,20 @@ every Jira site you have configured, grouped by stack, with fuzzy search and
 a rendered preview of the description. Selecting a ticket opens it in the
 browser.
 
-Sibling of [gotopr](https://github.com/asumaran/gotopr) (open GitHub PRs) and
-[herdr-goto](https://github.com/asumaran/herdr-goto) (herdr workspaces): same
+Sibling of [asgotopr](https://github.com/asumaran/asgotopr) (open GitHub PRs) and
+[asgoto](https://github.com/asumaran/asgoto) (herdr workspaces): same
 open-pick-exit popup pattern, same fuzzy search feel, but the universe is
 your Jira backlog.
 
 ## Install
 
 ```
-herdr plugin install asumaran/gotojira
+herdr plugin install asumaran/asgotoissues
 ```
 
 The manifest's `[[build]]` runs `scripts/fetch-binary.sh`, which downloads the
 release binary matching the manifest version and falls back to `go build`
-(`GOTOJIRA_BUILD_FROM_SOURCE=1` skips the download). Requires herdr >= 0.7.5.
+(`ASGOTOISSUES_BUILD_FROM_SOURCE=1` skips the download). Requires herdr >= 0.7.5.
 
 Bind a key to the `open` action in `~/.config/herdr/config.toml`:
 
@@ -27,15 +27,15 @@ Bind a key to the `open` action in `~/.config/herdr/config.toml`:
 [[keys.command]]
 key = ["prefix+t", "ctrl+alt+t"]
 type = "plugin_action"
-command = "asumaran.gotojira.open"
-description = "gotojira (Jira ticket switcher)"
+command = "asumaran.asgotoissues.open"
+description = "asgotoissues (Jira ticket switcher)"
 ```
 
 ## Configuration
 
-gotojira reads the same file the [asdev](https://github.com/asumaran/asdev)
+asgotoissues reads the same file the [asdev](https://github.com/asumaran/asdev)
 Claude Code plugin uses, `~/.claude/asdev.local.md` (override with
-`GOTOJIRA_CONFIG`). Only the `jira` block of each stack matters; stacks
+`ASGOTOISSUES_CONFIG`). Only the `jira` block of each stack matters; stacks
 without one are skipped:
 
 ```yaml
@@ -92,18 +92,18 @@ ticket in the browser, a click selects a ticket, and `esc` closes (so does
 ## Development
 
 ```bash
-go build -o gotojira .          # local build (plugin runs ./gotojira from the repo root)
-./gotojira -dump                # print stacks and tickets (no TTY; refreshes when stale)
-./gotojira -dump -query cart    # additionally print filter scores for a query
-./gotojira -dump -show PLAT-2099 # print a ticket's wiki → Markdown conversion
+go build -o asgotoissues .          # local build (plugin runs ./asgotoissues from the repo root)
+./asgotoissues -dump                # print stacks and tickets (no TTY; refreshes when stale)
+./asgotoissues -dump -query cart    # additionally print filter scores for a query
+./asgotoissues -dump -show PLAT-2099 # print a ticket's wiki → Markdown conversion
 go vet ./... && go test ./...
-scripts/pty-check.py ./gotojira   # end-to-end TUI check on a pty (python3 + pyte)
-herdr plugin link ~/Developer/gotojira   # register the working copy (no build step)
+scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 + pyte)
+herdr plugin link ~/Developer/asgotoissues   # register the working copy (no build step)
 ```
 
 Runtime state (`issuecache.json`) lives in `HERDR_PLUGIN_STATE_DIR`;
-standalone runs fall back to `~/.config/herdr/gotojira-tui/`.
-`GOTOJIRA_OPEN_CMD` replaces the browser opener (tests use it to capture the
+standalone runs fall back to `~/.config/herdr/asgotoissues-tui/`.
+`ASGOTOISSUES_OPEN_CMD` replaces the browser opener (tests use it to capture the
 URL).
 
 ## Releasing
@@ -111,4 +111,4 @@ URL).
 `scripts/release.sh <X.Y.Z>` gates on a clean tree + green vet/build/test,
 generates the CHANGELOG entry from commit subjects, syncs the manifest
 version, commits, tags and publishes the GitHub release; CI then attaches
-`gotojira-darwin-arm64`, the asset `fetch-binary.sh` downloads on installs.
+`asgotoissues-darwin-arm64`, the asset `fetch-binary.sh` downloads on installs.

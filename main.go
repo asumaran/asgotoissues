@@ -1,4 +1,4 @@
-// gotojira: a herdr plugin popup that lists the Jira tickets assigned to you
+// asgotoissues: a herdr plugin popup that lists the Jira tickets assigned to you
 // (open ones, across every stack configured in ~/.claude/asdev.local.md),
 // grouped by stack, with fuzzy search and a rendered preview of the
 // description. Selecting a ticket opens it in the browser.
@@ -35,7 +35,7 @@ func main() {
 
 	stacks, err := loadStacks()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "gotojira:", err)
+		fmt.Fprintln(os.Stderr, "asgotoissues:", err)
 		os.Exit(1)
 	}
 	cache := loadCache()

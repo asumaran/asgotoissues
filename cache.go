@@ -22,7 +22,7 @@ func stateDir() string {
 			base = filepath.Join(h, ".config")
 		}
 	}
-	return filepath.Join(base, "herdr", "gotojira-tui")
+	return filepath.Join(base, "herdr", "asgotoissues-tui")
 }
 
 // cacheFresh is how recent the cached snapshot must be to skip the background

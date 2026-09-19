@@ -1,5 +1,5 @@
-id = "asumaran.gotojira"
-name = "gotojira"
+id = "asumaran.asgotoissues"
+name = "asgotoissues"
 version = "0.3.0"
 min_herdr_version = "0.7.5"
 description = "Jump to your open Jira tickets across every configured stack"
@@ -20,4 +20,4 @@ title = "Jira"
 placement = "popup"
 width = "85%"
 height = "90%"
-command = ["./gotojira"]
+command = ["./asgotoissues"]

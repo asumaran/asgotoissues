@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""End-to-end TUI check for gotojira without a real terminal.
+"""End-to-end TUI check for asgotoissues without a real terminal.
 
 Spawns the binary on a pty, answers the terminal queries bubbletea sends
 (OSC 10/11, CSI 6n, DA1), replays keystrokes, and asserts on frames rendered
 with pyte. Everything runs in a throwaway sandbox: a fake HOME, a synthetic
-config (GOTOJIRA_CONFIG), an empty netrc, a fresh synthetic ticket cache (so
+config (ASGOTOISSUES_CONFIG), an empty netrc, a fresh synthetic ticket cache (so
 nothing is fetched) and a logging stub instead of the browser
-(GOTOJIRA_OPEN_CMD). It never reads the real config and never talks to Jira.
+(ASGOTOISSUES_OPEN_CMD). It never reads the real config and never talks to Jira.
 
-Usage: scripts/pty-check.py ./gotojira   (needs python3 + pyte)
+Usage: scripts/pty-check.py ./asgotoissues   (needs python3 + pyte)
 """
-NAME, ROWS, COLS = "gotojira", 18, 150
+NAME, ROWS, COLS = "asgotoissues", 18, 150
 import atexit, fcntl, json, os, pty, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time
 import pyte
 
@@ -142,14 +142,14 @@ tickets = [
     ticket("PLAT-2098", "acme", "Audit trail at the service boundary", "To Do", "To Do"),
     ticket("SHOP-602", "globex", "Create test fixtures", "Open", "To Do", parent="SHOP-600"),
 ]
-write(os.path.join(home, ".config", "herdr", "gotojira-tui", "issuecache.json"),
+write(os.path.join(home, ".config", "herdr", "asgotoissues-tui", "issuecache.json"),
       json.dumps({"fetched_at": now, "issues": tickets}))
 open_log = os.path.join(SANDBOX, "open.log")
 opener = write(os.path.join(SANDBOX, "opener"), '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s"\n' % open_log, 0o755)
 
 def session():
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", HOME=home, NETRC=netrc,
-               GOTOJIRA_CONFIG=config, GOTOJIRA_OPEN_CMD=opener, XDG_CONFIG_HOME=os.path.join(home, ".config"))
+               ASGOTOISSUES_CONFIG=config, ASGOTOISSUES_OPEN_CMD=opener, XDG_CONFIG_HOME=os.path.join(home, ".config"))
     for k in ("HERDR_PLUGIN_STATE_DIR", "JIRA_TOKEN_ACME", "JIRA_TOKEN_GLOBEX"):
         env.pop(k, None)
     if os.path.exists(open_log): os.remove(open_log)
@@ -168,12 +168,12 @@ def left(f):  return [l[1:1 + listw()].rstrip() for l in f[3:-3] if l[1:1 + list
 def prompt(f): return f[1].strip("│ ").rstrip()
 def counter(f): return f[0].strip("╭╮─ ")
 
-print("== gotojira pty driver (%dx%d) ==" % (COLS, ROWS))
+print("== asgotoissues pty driver (%dx%d) ==" % (COLS, ROWS))
 
 # ---------- run 1: grouped list, preview, filter by number, open ----------
 s = session()
-f = s.start("gotojira (dev) ❯"); dump("open", f)
-check(prompt(f) == "gotojira (dev) ❯", "prompt line is clean: %r" % f[1])
+f = s.start("asgotoissues (dev) ❯"); dump("open", f)
+check(prompt(f) == "asgotoissues (dev) ❯", "prompt line is clean: %r" % f[1])
 check(f[0].startswith("╭") and f[-1].startswith("╰") and "┬" in f[2],
       "one frame: input right under the top border, no title line")
 check(counter(f) == "3/3" and "type filter" in f[-2] and "esc/q quit" in f[-2], "counter %r and help %r" % (counter(f), f[-2]))
@@ -199,20 +199,20 @@ check(opened() == ["https://globex.example/browse/SHOP-602"], "enter opens the t
 
 # ---------- run 2: q quits with an empty filter ----------
 s = session()
-s.start("gotojira (dev) ❯")
+s.start("asgotoissues (dev) ❯")
 os.write(s.master, b"q"); s.pump(0.4)
 check(s.finish() == 0 and opened() == [], "q quits with an empty filter and opens nothing")
 
 # ---------- run 3: esc cancels and opens nothing ----------
 s = session()
-s.start("gotojira (dev) ❯")
+s.start("asgotoissues (dev) ❯")
 s.send(DOWN, 0.3)
 os.write(s.master, ESC); s.pump(0.4)
 check(s.finish() == 0 and opened() == [], "esc quits and opens nothing")
 
 # ---------- run 4: the divider moves and stays where it was left ----------
 s = session()
-f = s.start("gotojira (dev) ❯"); at = divider(f)
+f = s.start("asgotoissues (dev) ❯"); at = divider(f)
 f = s.send(SHIFT_RIGHT, 0.6); grown = divider(f)
 check(grown > at and all(len(l) == COLS for l in f), "shift+right grows the list: %d -> %d" % (at, grown))
 f = s.send(SHIFT_LEFT, 0.6)
@@ -220,7 +220,7 @@ check(divider(f) == at, "shift+left shrinks it back: %d" % divider(f))
 s.send(SHIFT_RIGHT, 0.6)
 os.write(s.master, ESC); s.pump(0.4); s.finish()
 s = session()
-f = s.start("gotojira (dev) ❯")
+f = s.start("asgotoissues (dev) ❯")
 check(divider(f) == grown, "the next run opens with the same split: %d" % divider(f))
 s.send(SHIFT_LEFT, 0.6)
 os.write(s.master, ESC); s.pump(0.4); s.finish()

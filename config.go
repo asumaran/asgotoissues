@@ -1,6 +1,6 @@
 package main
 
-// Stack configuration. gotojira reuses the asdev plugin's config file
+// Stack configuration. asgotoissues reuses the asdev plugin's config file
 // (~/.claude/asdev.local.md): a markdown file whose YAML front matter lists
 // stacks, each with a `jira` block (base_url, type, email, api_token_env).
 // Only that block is read here; everything else in the file is ignored.
@@ -38,7 +38,7 @@ func (s stack) host() string {
 }
 
 func configPath() string {
-	if p := os.Getenv("GOTOJIRA_CONFIG"); p != "" {
+	if p := os.Getenv("ASGOTOISSUES_CONFIG"); p != "" {
 		return p
 	}
 	home, _ := os.UserHomeDir()

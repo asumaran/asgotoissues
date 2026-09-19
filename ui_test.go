@@ -110,7 +110,7 @@ func (e errTest) Error() string { return string(e) }
 
 // TestMain sandboxes the cache: tests must never touch the real state dir.
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "gotojira-test")
+	dir, err := os.MkdirTemp("", "asgotoissues-test")
 	if err != nil {
 		panic(err)
 	}

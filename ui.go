@@ -2,7 +2,7 @@ package main
 
 // The bubbletea model: a filter input on top, a two-column body (grouped
 // ticket list left, rendered description right) and a help footer. Modeled
-// on gotopr/herdr-goto: the input is focused before the program starts,
+// on asgotopr/asgoto: the input is focused before the program starts,
 // every printable key filters, and the selected ticket is opened in the
 // browser AFTER the TUI exits (quitting is what closes the popup).
 
@@ -632,21 +632,21 @@ func newFilterInput(prompt string) textinput.Model {
 // non-release builds.
 func promptText() string {
 	if strings.HasPrefix(version, "v") {
-		return stPrompt.Render("gotojira ❯ ")
+		return stPrompt.Render("asgotoissues ❯ ")
 	}
-	return stPrompt.Render("gotojira (") + stDev.Render("dev") + stPrompt.Render(") ❯ ")
+	return stPrompt.Render("asgotoissues (") + stDev.Render("dev") + stPrompt.Render(") ❯ ")
 }
 
 // openInBrowser hands the URL to the OS after the TUI has exited.
-// GOTOJIRA_OPEN_CMD overrides the opener (tests log the argv instead).
+// ASGOTOISSUES_OPEN_CMD overrides the opener (tests log the argv instead).
 func openInBrowser(url string) {
 	if url == "" {
 		return
 	}
 	var cmd *exec.Cmd
 	switch {
-	case os.Getenv("GOTOJIRA_OPEN_CMD") != "":
-		cmd = exec.Command(os.Getenv("GOTOJIRA_OPEN_CMD"), url)
+	case os.Getenv("ASGOTOISSUES_OPEN_CMD") != "":
+		cmd = exec.Command(os.Getenv("ASGOTOISSUES_OPEN_CMD"), url)
 	case runtime.GOOS == "darwin":
 		cmd = exec.Command("open", url)
 	default:

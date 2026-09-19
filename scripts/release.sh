@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# release.sh — cut a new gotojira release, gated on a clean tree and a green
+# release.sh — cut a new asgotoissues release, gated on a clean tree and a green
 # vet+build+test.
 #
 # Releases are created from a tag: a GitHub Actions workflow then compiles the

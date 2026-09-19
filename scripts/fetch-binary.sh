@@ -1,5 +1,5 @@
 #!/bin/sh
-# fetch-binary.sh — the plugin's [[build]] command: provision ./gotojira without
+# fetch-binary.sh — the plugin's [[build]] command: provision ./asgotoissues without
 # requiring a Go toolchain.
 #
 # Downloads the prebuilt binary attached to the GitHub release matching the
@@ -9,9 +9,9 @@
 # fails. Exits non-zero only when neither path works, which aborts the plugin
 # install.
 #
-# Set GOTOJIRA_BUILD_FROM_SOURCE=1 to skip the download and always compile
+# Set ASGOTOISSUES_BUILD_FROM_SOURCE=1 to skip the download and always compile
 # locally (for users who prefer not to run prebuilt binaries):
-#   GOTOJIRA_BUILD_FROM_SOURCE=1 herdr plugin install asumaran/gotojira
+#   ASGOTOISSUES_BUILD_FROM_SOURCE=1 herdr plugin install asumaran/asgotoissues
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -33,16 +33,16 @@ case "$(uname -m)" in
   *)               ARCH="" ;;
 esac
 
-URL="https://github.com/asumaran/gotojira/releases/download/v${VERSION}/gotojira-${OS}-${ARCH}"
+URL="https://github.com/asumaran/asgotoissues/releases/download/v${VERSION}/asgotoissues-${OS}-${ARCH}"
 
-if [ "${GOTOJIRA_BUILD_FROM_SOURCE:-0}" = "1" ]; then
-  echo "fetch-binary: GOTOJIRA_BUILD_FROM_SOURCE=1, skipping release download"
+if [ "${ASGOTOISSUES_BUILD_FROM_SOURCE:-0}" = "1" ]; then
+  echo "fetch-binary: ASGOTOISSUES_BUILD_FROM_SOURCE=1, skipping release download"
 elif [ -n "$OS" ] && [ -n "$ARCH" ] && command -v curl >/dev/null 2>&1; then
   tmp="$(mktemp)"
   if curl -fsSL --retry 2 -o "$tmp" "$URL"; then
     chmod +x "$tmp"
-    mv "$tmp" gotojira
-    echo "fetch-binary: installed gotojira-${OS}-${ARCH} from release v${VERSION}"
+    mv "$tmp" asgotoissues
+    echo "fetch-binary: installed asgotoissues-${OS}-${ARCH} from release v${VERSION}"
     exit 0
   fi
   rm -f "$tmp"
@@ -50,8 +50,8 @@ elif [ -n "$OS" ] && [ -n "$ARCH" ] && command -v curl >/dev/null 2>&1; then
 fi
 
 if command -v go >/dev/null 2>&1; then
-  go build -ldflags "-X main.version=v${VERSION}-source" -o gotojira .
-  echo "fetch-binary: built gotojira from source (v${VERSION}-source)"
+  go build -ldflags "-X main.version=v${VERSION}-source" -o asgotoissues .
+  echo "fetch-binary: built asgotoissues from source (v${VERSION}-source)"
   exit 0
 fi
 

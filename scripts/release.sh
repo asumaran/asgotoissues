@@ -104,7 +104,9 @@ sed -i '' -E "s/^version = \".*\"/version = \"${VERSION}\"/" herdr-plugin.toml
 # --- apply ------------------------------------------------------------------
 git add CHANGELOG.md herdr-plugin.toml
 git commit -m "chore(release): ${tag}"
-git tag "$tag"
+# -m keeps the tag creatable without an editor: tag.gpgsign turns every tag
+# into an annotated one, and an annotated tag without a message needs a tty.
+git tag -m "$tag" "$tag"
 
 if $DO_PUSH; then
   git push origin HEAD

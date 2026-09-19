@@ -1,10 +1,12 @@
-// asgotoissues: a herdr plugin popup that lists the Jira tickets assigned to you
-// (open ones, across every stack configured in ~/.claude/asdev.local.md),
-// grouped by stack, with fuzzy search and a rendered preview of the
-// description. Selecting a ticket opens it in the browser.
+// asgotoissues: a herdr plugin popup that lists your open issues (Jira
+// tickets and GitHub issues, across every stack configured in
+// ~/.claude/asdev.local.md), grouped by stack, with fuzzy search and a
+// rendered preview of the description. Selecting an issue opens it in the
+// browser.
 //
-// Data comes straight from the Jira REST API (netrc / token auth), cached
-// stale-while-revalidate so the popup renders instantly.
+// Data comes straight from the trackers (the Jira REST API with netrc / token
+// auth, GitHub through the gh CLI), cached stale-while-revalidate so the
+// popup renders instantly.
 package main
 
 import (
@@ -23,9 +25,9 @@ var version = "dev"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print the embedded version")
-	dump := flag.Bool("dump", false, "print configured stacks and tickets (no TUI)")
+	dump := flag.Bool("dump", false, "print configured stacks and issues (no TUI)")
 	query := flag.String("query", "", "with -dump: print filter scores for this query")
-	show := flag.String("show", "", "with -dump: print the Markdown conversion of this ticket's description")
+	show := flag.String("show", "", "with -dump: print this issue's description as Markdown")
 	flag.Parse()
 
 	if *showVersion {
@@ -72,10 +74,16 @@ func runDump(stacks []stack, cache issueCache, stale bool, query, show string) {
 		saveCache(cache)
 	}
 	fmt.Printf("config: %s\n", configPath())
-	fmt.Printf("cache: %d tickets, fetched %s (%s)\n", len(cache.Issues), relTime(cache.FetchedAt), cacheFile())
+	fmt.Printf("cache: %d issues, fetched %s (%s)\n", len(cache.Issues), relTime(cache.FetchedAt), cacheFile())
 	fmt.Printf("stacks: %d\n", len(stacks))
 	for _, s := range stacks {
-		fmt.Printf("  %-16s %s (%s)\n", s.Name, s.BaseURL, s.Type)
+		for _, kind := range s.Trackers {
+			where := s.BaseURL + " (" + s.Type + ")"
+			if kind == kindGitHub {
+				where = strings.Join(s.Orgs, ", ")
+			}
+			fmt.Printf("  %-16s %-6s %s\n", s.Name, kind, where)
+		}
 	}
 
 	entries := buildEntries(cache.Issues)
@@ -85,14 +93,18 @@ func runDump(stacks []stack, cache issueCache, stale bool, query, show string) {
 			fmt.Printf("%s\n", e.it.Stack)
 			last = e.it.Stack
 		}
+		label := e.it.Type
+		if label == "" {
+			label = e.it.sourceKind()
+		}
 		fmt.Printf("  %-12s [%s] %s: %s (updated %s, desc %dB)\n",
-			e.it.Key, e.it.Status, e.it.Type, truncate(e.it.Summary, 60), relTime(e.it.Updated), len(e.it.Description))
+			e.it.Key, e.it.Status, label, truncate(e.it.Summary, 60), relTime(e.it.Updated), len(e.it.Description))
 	}
 
 	if show != "" {
 		for _, it := range cache.Issues {
 			if strings.EqualFold(it.Key, show) {
-				fmt.Printf("---- %s (wiki → markdown) ----\n%s\n", it.Key, wikiToMarkdown(it.Description))
+				fmt.Printf("---- %s (as markdown) ----\n%s\n", it.Key, it.markdown())
 			}
 		}
 	}

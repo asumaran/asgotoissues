@@ -2,8 +2,10 @@ package main
 
 // Stack configuration. asgotoissues reuses the asdev plugin's config file
 // (~/.claude/asdev.local.md): a markdown file whose YAML front matter lists
-// stacks, each with a `jira` block (base_url, type, email, api_token_env).
-// Only that block is read here; everything else in the file is ignored.
+// stacks, each with a `jira` block (base_url, type, email, api_token_env)
+// and/or a `github` block (org, orgs). `issues:` says which trackers a stack
+// lists; without it a stack with a jira.base_url lists Jira. Everything else
+// in the file is ignored.
 
 import (
 	"bufio"
@@ -12,15 +14,20 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
-// stack is one Jira site the picker queries.
+// stack is one group of the list: a Jira site, GitHub owners, or both.
 type stack struct {
-	Name     string // key under `stacks:` (used as the list group header)
+	Name     string   // key under `stacks:` (used as the list group header)
+	Trackers []string // provider kinds to query, in the order `issues:` gives
+	Orgs     []string // GitHub owners (orgs or users) whose issues are listed
+
+	// Jira
 	BaseURL  string // https://org.atlassian.net, no trailing slash
 	Type     string // "cloud" (default) | "server"
 	Email    string // basic-auth user for cloud (server uses a bearer token)
@@ -69,14 +76,40 @@ type rawJira struct {
 	Username string `yaml:"username"`
 }
 
-type rawStack struct {
-	Jira *rawJira `yaml:"jira"`
+type rawGitHub struct {
+	Org  string   `yaml:"org"`
+	Orgs []string `yaml:"orgs"`
 }
 
-// parseStacks decodes the stacks from the config document. Stacks without a
-// jira.base_url are skipped (they are GitHub-only stacks). Order follows the
-// file: yaml.v3 map decoding loses it, so the key order is recovered from a
-// yaml.Node walk.
+type rawStack struct {
+	Issues []string   `yaml:"issues"`
+	Jira   *rawJira   `yaml:"jira"`
+	GitHub *rawGitHub `yaml:"github"`
+}
+
+// owners merges `org` and `orgs`, first mention wins.
+func (g *rawGitHub) owners() []string {
+	if g == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, o := range append([]string{g.Org}, g.Orgs...) {
+		o = strings.TrimSpace(o)
+		if o == "" || seen[strings.ToLower(o)] {
+			continue
+		}
+		seen[strings.ToLower(o)] = true
+		out = append(out, o)
+	}
+	return out
+}
+
+// parseStacks decodes the stacks from the config document. A stack lists the
+// trackers named by its `issues:` key; without the key it lists Jira when it
+// has a jira.base_url, and a stack that lists nothing is skipped. Order
+// follows the file: yaml.v3 map decoding loses it, so the key order is
+// recovered from a yaml.Node walk.
 func parseStacks(doc string) ([]stack, error) {
 	var root struct {
 		Stacks map[string]rawStack `yaml:"stacks"`
@@ -91,27 +124,58 @@ func parseStacks(doc string) ([]stack, error) {
 	order := stackKeyOrder(src)
 	var out []stack
 	for name, rs := range root.Stacks {
-		if rs.Jira == nil || strings.TrimSpace(rs.Jira.BaseURL) == "" {
+		st := stack{Name: name, Orgs: rs.GitHub.owners(), Order: order[name]}
+		if rs.Jira != nil {
+			st.BaseURL = strings.TrimRight(strings.TrimSpace(rs.Jira.BaseURL), "/")
+			st.Type = strings.ToLower(strings.TrimSpace(rs.Jira.Type))
+			if st.Type == "" {
+				st.Type = "cloud"
+			}
+			st.Email = strings.TrimSpace(rs.Jira.Email)
+			st.TokenEnv = strings.TrimSpace(rs.Jira.TokenEnv)
+			st.Username = strings.TrimSpace(rs.Jira.Username)
+		}
+		trackers, err := stackTrackers(st, rs.Issues)
+		if err != nil {
+			return nil, err
+		}
+		if len(trackers) == 0 {
 			continue
 		}
-		typ := strings.ToLower(strings.TrimSpace(rs.Jira.Type))
-		if typ == "" {
-			typ = "cloud"
-		}
-		out = append(out, stack{
-			Name:     name,
-			BaseURL:  strings.TrimRight(strings.TrimSpace(rs.Jira.BaseURL), "/"),
-			Type:     typ,
-			Email:    strings.TrimSpace(rs.Jira.Email),
-			TokenEnv: strings.TrimSpace(rs.Jira.TokenEnv),
-			Username: strings.TrimSpace(rs.Jira.Username),
-			Order:    order[name],
-		})
+		st.Trackers = trackers
+		out = append(out, st)
 	}
 	if len(out) == 0 {
-		return nil, errors.New("config: no stack has a jira.base_url")
+		return nil, errors.New("config: no stack lists an issue tracker (add `issues:` or a jira.base_url)")
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Order < out[j].Order })
+	return out, nil
+}
+
+// stackTrackers resolves the trackers of one stack and checks that each has
+// the block it needs.
+func stackTrackers(st stack, listed []string) ([]string, error) {
+	if listed == nil {
+		if st.BaseURL != "" {
+			return []string{kindJira}, nil
+		}
+		return nil, nil
+	}
+	var out []string
+	for _, kind := range listed {
+		kind = strings.ToLower(strings.TrimSpace(kind))
+		switch {
+		case kind == kindJira && st.BaseURL == "":
+			return nil, fmt.Errorf("config: %s lists jira issues but has no jira.base_url", st.Name)
+		case kind == kindGitHub && len(st.Orgs) == 0:
+			return nil, fmt.Errorf("config: %s lists github issues but has no github.org", st.Name)
+		case kind != kindJira && kind != kindGitHub:
+			return nil, fmt.Errorf("config: %s: unknown issue tracker %q (jira, github)", st.Name, kind)
+		}
+		if !slices.Contains(out, kind) {
+			out = append(out, kind)
+		}
+	}
 	return out, nil
 }
 

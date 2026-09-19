@@ -2,7 +2,7 @@ id = "asumaran.asgotoissues"
 name = "asgotoissues"
 version = "0.5.0"
 min_herdr_version = "0.7.5"
-description = "Jump to your open Jira tickets across every configured stack"
+description = "Jump to your open issues (Jira, GitHub) across every configured stack"
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -10,13 +10,13 @@ command = ["scripts/fetch-binary.sh"]
 
 [[actions]]
 id = "open"
-title = "Open Jira ticket switcher"
+title = "Open issue switcher"
 contexts = ["global"]
 command = ["scripts/open-pane.sh"]
 
 [[panes]]
 id = "picker"
-title = "Jira"
+title = "Issues"
 placement = "popup"
 width = "85%"
 height = "90%"

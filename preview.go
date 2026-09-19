@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"strconv"
 	"strings"
 	"time"
@@ -28,9 +29,8 @@ func previewKey(it issue, width int) string {
 
 func renderPreviewCmd(it issue, width int, style string) tea.Cmd {
 	key := previewKey(it, width)
-	body := it.Description
 	return func() tea.Msg {
-		md := wikiToMarkdown(body)
+		md := it.markdown()
 		content, err := renderMarkdown(md, width, style)
 		if err != nil {
 			content = md // raw text beats nothing
@@ -66,21 +66,15 @@ func renderMarkdown(body string, width int, style string) (string, error) {
 
 // previewHeader is the instant (non-glamour) header above the rendered body.
 func previewHeader(it issue, width int) string {
-	parts := []string{it.Key, it.Type}
-	if it.Priority != "" {
-		parts = append(parts, it.Priority)
-	}
-	if it.ParentKey != "" {
-		parts = append(parts, "↳ "+it.ParentKey)
-	}
+	parts := append([]string{it.Key}, it.metaParts()...)
 	if !it.Created.IsZero() {
 		parts = append(parts, "created "+relTime(it.Created))
 	}
 	parts = append(parts, "updated "+relTime(it.Updated))
 	meta := strings.Join(parts, " · ")
 	title := truncate(it.Summary, width)
-	status := statusStyle(it.StatusCat).Render("[" + it.Status + "]")
-	return stTitle.Render(title) + "\n" + status + " " + stDim.Render(truncate(meta, width-len(it.Status)-3))
+	status := stateStyle(it.state()).Render("[" + it.Status + "]")
+	return stTitle.Render(title) + "\n" + status + " " + stDim.Render(truncate(meta, width-ansi.StringWidth(it.Status)-3))
 }
 
 // relTime formats a timestamp as a compact "2h ago" style age.

@@ -1,6 +1,6 @@
 package main
 
-// Jira data source. One search per stack, run concurrently as tea.Cmds:
+// Jira provider. One search per stack:
 // Cloud uses POST /rest/api/2/search/jql (v2 so text fields come back as
 // wiki markup instead of ADF), Server/DC uses POST /rest/api/2/search. The
 // JQL is fixed: tickets assigned to the authenticated user that are not in
@@ -15,37 +15,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 )
-
-type issue struct {
-	Key         string    `json:"key"` // identity (unique across a site)
-	Stack       string    `json:"stack"`
-	URL         string    `json:"url"`
-	Summary     string    `json:"summary"`
-	Description string    `json:"description"` // wiki markup (may be empty)
-	Status      string    `json:"status"`
-	StatusCat   string    `json:"status_cat"` // "To Do" | "In Progress" | ...
-	Type        string    `json:"type"`
-	Priority    string    `json:"priority"`
-	Project     string    `json:"project"`
-	ParentKey   string    `json:"parent_key,omitempty"`
-	Created     time.Time `json:"created"`
-	Updated     time.Time `json:"updated"`
-}
-
-// number returns the numeric part of the key ("PLAT-2099" → "2099").
-func (i issue) number() string {
-	if p := strings.LastIndexByte(i.Key, '-'); p >= 0 {
-		return i.Key[p+1:]
-	}
-	return i.Key
-}
 
 const (
 	jiraJQL      = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
@@ -106,13 +78,18 @@ func (r searchResp) errText() string {
 	return r.Message
 }
 
-// fetchStack returns every open ticket assigned to the user on one stack.
-func fetchStack(s stack) ([]issue, error) {
+type jiraProvider struct{ s stack }
+
+func (jiraProvider) kind() string { return kindJira }
+
+// fetch returns every open ticket assigned to the user on one stack.
+func (p jiraProvider) fetch(ctx context.Context) ([]issue, error) {
+	s := p.s
 	cred, err := resolveCredential(s)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), jiraTimeout*jiraMaxPages)
+	ctx, cancel := context.WithTimeout(ctx, jiraTimeout*jiraMaxPages)
 	defer cancel()
 
 	var out []issue
@@ -141,6 +118,8 @@ func fetchStack(s stack) ([]issue, error) {
 			out = append(out, issue{
 				Key:         raw.Key,
 				Stack:       s.Name,
+				Source:      kindJira,
+				State:       jiraState(raw.Fields.Status.Name, raw.Fields.Status.Category.Name),
 				URL:         s.BaseURL + "/browse/" + raw.Key,
 				Summary:     raw.Fields.Summary,
 				Description: raw.Fields.Description,
@@ -234,73 +213,15 @@ func parseJiraTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("bad time %q", s)
 }
 
-// ---- merging ----
-
-// mergeStacks builds the full list from per-stack results, falling back to
-// the cached issues of any stack whose fetch failed. Within a stack, issues
-// are ordered newest created first (which matches descending key numbers
-// within a project); stacks keep their config order.
-func mergeStacks(stacks []stack, fresh map[string][]issue, cached []issue) []issue {
-	cachedBy := map[string][]issue{}
-	for _, it := range cached {
-		cachedBy[it.Stack] = append(cachedBy[it.Stack], it)
+// jiraState folds a Jira status into the picker's three states: the status
+// category says in progress or not, and the usual "blocked" naming wins.
+func jiraState(status, category string) string {
+	if strings.Contains(strings.ToLower(status), "block") {
+		return stateBlocked
 	}
-	var out []issue
-	for _, s := range stacks {
-		items, ok := fresh[s.Name]
-		if !ok {
-			items = cachedBy[s.Name]
-		}
-		sort.SliceStable(items, func(i, j int) bool { return newerIssue(items[i], items[j]) })
-		out = append(out, items...)
+	switch strings.ToLower(category) {
+	case "in progress", "indeterminate":
+		return stateDoing
 	}
-	return out
-}
-
-// newerIssue orders by creation date (newest first), falling back to key
-// number when the dates tie or are missing (cache entries from older
-// snapshots may lack Created until the next refresh).
-func newerIssue(a, b issue) bool {
-	if !a.Created.Equal(b.Created) {
-		return a.Created.After(b.Created)
-	}
-	if a.Project == b.Project {
-		na, _ := strconv.Atoi(a.number())
-		nb, _ := strconv.Atoi(b.number())
-		if na != nb {
-			return na > nb
-		}
-	}
-	return a.Updated.After(b.Updated)
-}
-
-// ---- bubbletea plumbing ----
-
-type stackMsg struct {
-	stack  string
-	issues []issue
-	err    error
-}
-
-func fetchStackCmd(s stack) tea.Cmd {
-	return func() tea.Msg {
-		issues, err := fetchStack(s)
-		return stackMsg{stack: s.Name, issues: issues, err: err}
-	}
-}
-
-// refreshSynchronously fetches every stack inline (used by -dump). Returns
-// the merged list plus one error per failed stack.
-func refreshSynchronously(stacks []stack, cached []issue) ([]issue, []error) {
-	fresh := map[string][]issue{}
-	var errs []error
-	for _, s := range stacks {
-		items, err := fetchStack(s)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		fresh[s.Name] = items
-	}
-	return mergeStacks(stacks, fresh, cached), errs
+	return stateTodo
 }

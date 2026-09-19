@@ -4,12 +4,12 @@ Guidance for working in this repository.
 
 ## What this is
 
-`asgotoissues` is a herdr plugin popup that lists the Jira tickets assigned to
-the user (open, not Done) across every stack configured in
+`asgotoissues` is a herdr plugin popup that lists the user's open issues (Jira
+tickets and GitHub issues) across every stack configured in
 `~/.claude/asdev.local.md`, grouped by stack, with fuzzy search and a
-glamour-rendered preview of the description (wiki markup → Markdown).
-Selecting a ticket opens it in the browser. Open, pick, exit — same
-lifecycle as `asgotopr` and `asgoto`, which this repo is modeled on.
+glamour-rendered preview of the description. Selecting an issue opens it in
+the browser. Open, pick, exit: the same lifecycle as `asgotopr` and `asgoto`,
+which this repo is modeled on.
 
 Distributed as a herdr plugin (`herdr plugin install asumaran/asgotoissues`; the
 manifest's `[[build]]` runs `scripts/fetch-binary.sh`). Each GitHub Release
@@ -28,10 +28,16 @@ Files are split by concern but everything stays in `package main`:
 - `main.go` — flags (`-version`, `-dump`, `-query`, `-show`), model
   construction, `tea.NewProgram`, post-quit browser open, `runDump`.
 - `config.go` — front-matter extraction from `asdev.local.md`, stack parsing
-  (config order preserved via a `yaml.Node` walk), netrc + env credentials.
-- `jira.go` — per-stack search (cloud `/rest/api/2/search/jql` with
-  `nextPageToken`, server `/rest/api/2/search` with `startAt`), issue
-  mapping, `mergeStacks` (fresh-or-cached per stack), tea.Cmd plumbing.
+  (config order preserved via a `yaml.Node` walk), which trackers a stack
+  lists (`issues:`), netrc + env credentials for Jira.
+- `provider.go` — the tracker-neutral side: the `issue` struct, the
+  `provider` interface (`kind`, `fetch`), `sourcesOf` (one source per tracker
+  of a stack), `mergeStacks` (fresh-or-cached per source), tea.Cmd plumbing.
+- `jira.go` — the Jira provider: per-stack search (cloud
+  `/rest/api/2/search/jql` with `nextPageToken`, server `/rest/api/2/search`
+  with `startAt`), issue mapping.
+- `github.go` — the GitHub provider: issue searches through `gh api graphql`
+  (`ghRun` is the seam tests replace), issue mapping, state from labels.
 - `wiki.go` — Jira wiki markup → Markdown (headings, lists, code/noformat/
   quote blocks, tables, links, mono/bold/italic, mentions).
 - `cache.go` — state dir resolution, `issuecache.json` load/save, 60s
@@ -55,12 +61,12 @@ Files are split by concern but everything stays in `package main`:
 
 ```bash
 go build -o asgotoissues .    # plugin runs ./asgotoissues from the repo root
-./asgotoissues -dump          # stacks + tickets, no TTY (refreshes when stale)
+./asgotoissues -dump          # stacks + issues, no TTY (refreshes when stale)
 ./asgotoissues -dump -query x # additionally prints filter scores
 ./asgotoissues -dump -show KEY # prints the wiki → Markdown conversion of KEY
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 + pyte)
-herdr plugin link ~/Developer/asgotoissues   # link does NOT run [[build]]; go build yourself
+herdr plugin link "$PWD"   # link does NOT run [[build]]; go build yourself
 ```
 
 Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
@@ -87,29 +93,49 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `resize`.
 - **Mouse**: the wheel follows the pointer, as in asgitlog: over the list
   (`overList`) it moves the selection through the same code as the arrow keys,
-  anywhere else it scrolls the description. A left click on a ticket row moves
+  anywhere else it scrolls the description. A left click on an issue row moves
   the selection and never opens anything.
+- **Providers**: a tracker is a `provider` that returns normalized `issue`s.
+  Whatever is tracker-specific is settled at fetch time and stored on the
+  issue: `State` (todo, doing, blocked) drives the colors, `Meta` holds the
+  preview's meta parts when the Jira fields do not cover them, `BodyFormat`
+  says whether the description is wiki markup or already Markdown. The UI,
+  the filter and the preview never ask which tracker an issue came from. To
+  add a tracker: implement `provider`, give it a kind, handle the kind in
+  `sourcesOf` and `stackTrackers`.
+- **The cache file is a contract**: `issue`'s JSON tags are the format of
+  `issuecache.json` and of the fixtures in `scripts/pty-check.py`. New fields
+  are `omitempty` and an issue without them must keep working (no `Source`
+  means Jira, no `State` falls back to the Jira status fields), so a snapshot
+  written by an older version still renders.
 - **Config source is asdev's file, on purpose**: one place to declare a
-  stack's Jira site for both the Claude plugin and this picker. Only
-  `stacks.<name>.jira.{base_url,type,email,api_token_env,username}` is read.
-- **Auth**: `~/.netrc` (by host) beats the env var, because the plugin
+  stack for both the Claude plugin and this picker. Only
+  `stacks.<name>.issues`, `stacks.<name>.jira.{base_url,type,email,api_token_env,username}`
+  and `stacks.<name>.github.{org,orgs}` are read. Without `issues:` a stack
+  lists Jira when it has a `jira.base_url`, so a config that only knows about
+  Jira needs no changes.
+- **GitHub goes through `gh`**, like asgotopr: no token handling here, and
+  the user is whoever `gh` is logged in as. A stack lists the open issues
+  assigned to that user under its owners (`assignee:@me`), one search for
+  all of them.
+- **Jira auth**: `~/.netrc` (by host) beats the env var, because the plugin
   process may not inherit shell rc exports. Cloud = basic (email + token);
   server = bearer PAT unless `username` is set.
-- **API v2, not v3**: v3 returns descriptions as ADF JSON; v2 returns wiki
+- **Jira API v2, not v3**: v3 returns descriptions as ADF JSON; v2 returns wiki
   markup, which `wiki.go` converts well enough for a preview. `currentUser()`
   works with basic auth on Cloud (it does not with some server PAT setups;
   the asdev skill uses `account_id` for that reason, but here the query is
   fixed and the user is always the token owner).
 - **Caching**: stale-while-revalidate; first frame always renders from
-  `issuecache.json`; snapshots fresher than 60s skip the refresh. Stacks
-  refresh concurrently (one tea.Cmd each); a failed stack keeps its cached
-  tickets and the snapshot's `FetchedAt` is NOT advanced, so the next open
+  `issuecache.json`; snapshots fresher than 60s skip the refresh. Sources
+  (one per tracker of a stack) refresh concurrently, one tea.Cmd each; a
+  failed source keeps its cached issues and the snapshot's `FetchedAt` is NOT advanced, so the next open
   retries. Errors take the help line, never a modal; the refresh mark sits
   next to the counter.
 - **Selection is deliberately just "open in browser"** (`open` on macOS,
   `xdg-open` elsewhere, `ASGOTOISSUES_OPEN_CMD` override), executed after quit
   because quitting closes the popup. Jumping to a checkout / creating a
-  worktree for a ticket was considered and rejected for v1.
+  worktree for an issue was considered and rejected for v1.
 - **Never query the terminal behind bubbletea's back**: `Init` issues
   `tea.RequestBackgroundColor()` and the `tea.BackgroundColorMsg` reply picks
   the glamour style ("dark"/"light"). Frames before the reply use "dark";
@@ -120,16 +146,18 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
 - **View**: `View()` returns a `tea.View` built from `render()`, which holds
   the frame text and is what the tests assert on. The alt screen is declared
   per frame there; there is no `tea.WithAltScreen` program option in v2.
-- Ordering: stacks in config order; tickets within a stack by `created`
+- Ordering: stacks in config order; issues within a stack by `created`
   desc (`newerIssue`), falling back to key number, then `updated`.
 - Search corpus: summary + key/number + status/type/project/stack/parent
-  metas; exact key +30, exact number +20, key prefix with dash +10, exact
+  and the provider's meta parts (repo, labels); exact key +30, exact number
+  +20 (the part after the last `-` or `#`), key prefix with `-` or `#` +10, exact
   stack/project +10, key hit +2, ties broken by newer `updated`.
 
 ## Testing
 
 Unit tests cover the pure logic (config parsing, netrc, time parsing,
-merge fallback, wiki conversion, ranking, grouping, key handling, partial
+merge fallback per source, the GitHub provider against a fake `ghRun`,
+issues cached by older versions, wiki conversion, ranking, grouping, key handling, partial
 refresh failure, View content). `TestMain` points `HERDR_PLUGIN_STATE_DIR`
 at a temp dir so tests never touch the real cache. For end-to-end TUI
 verification without a TTY, drive the binary in a pty (answer OSC 10/11 +

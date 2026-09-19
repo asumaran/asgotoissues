@@ -48,22 +48,17 @@ var (
 	stBlocked = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
-// statusStyle colors a status by its category (green in progress, dim to do)
-// with a red override for the usual "blocked" naming.
-func statusStyle(cat string) lipgloss.Style {
-	switch strings.ToLower(cat) {
-	case "in progress", "indeterminate":
+// stateStyle colors an issue by its state: green in progress, red blocked,
+// dim to do.
+func stateStyle(state string) lipgloss.Style {
+	switch state {
+	case stateDoing:
 		return stDoing
+	case stateBlocked:
+		return stBlocked
 	default:
 		return stTodo
 	}
-}
-
-func rowStatusStyle(it issue) lipgloss.Style {
-	if strings.Contains(strings.ToLower(it.Status), "block") {
-		return stBlocked
-	}
-	return statusStyle(it.StatusCat)
 }
 
 // ---- key bindings ----
@@ -106,6 +101,7 @@ func defaultKeys() keyMap {
 type model struct {
 	// data
 	stacks    []stack
+	sources   []source
 	entries   []*entry
 	summaries []string // parallel corpora, see filter.go
 	keysC     []string
@@ -113,7 +109,7 @@ type model struct {
 	cache     issueCache
 
 	// background refresh
-	pending    int // stacks still fetching
+	pending    int // sources still fetching
 	fresh      map[string][]issue
 	fetchErrs  []string
 	refreshing bool
@@ -145,6 +141,7 @@ type model struct {
 func newModel(stacks []stack, cache issueCache, stale bool, prompt string) model {
 	m := model{
 		stacks:       stacks,
+		sources:      sourcesOf(stacks),
 		cache:        cache,
 		refreshing:   stale,
 		ti:           newFilterInput(prompt),
@@ -159,7 +156,7 @@ func newModel(stacks []stack, cache issueCache, stale bool, prompt string) model
 		height:       24,
 	}
 	if stale {
-		m.pending = len(stacks)
+		m.pending = len(m.sources)
 	}
 	m.setEntries(cache.Issues)
 	m.applyFilter()
@@ -253,7 +250,7 @@ func (m *model) keepCursorOn(url string) {
 func (m *model) keyW() int {
 	w := 0
 	for _, e := range m.entries {
-		if l := len(e.it.Key); l > w {
+		if l := ansi.StringWidth(e.it.Key); l > w {
 			w = l
 		}
 	}
@@ -279,7 +276,7 @@ func (m *model) rowLine(r row, selected bool, keyW int) string {
 		return stHeader.Render(r.stack)
 	}
 	it := r.e.it
-	pad := strings.Repeat(" ", keyW-len(it.Key))
+	pad := strings.Repeat(" ", max(0, keyW-ansi.StringWidth(it.Key)))
 	if selected {
 		return stSel.Render("▌ " + it.Key + pad + " " + it.Summary)
 	}
@@ -287,7 +284,7 @@ func (m *model) rowLine(r row, selected bool, keyW int) string {
 	if r.match && len(r.idx) > 0 {
 		title = highlight(title, r.idx)
 	}
-	return "  " + rowStatusStyle(it).Render(it.Key) + pad + " " + title
+	return "  " + stateStyle(it.state()).Render(it.Key) + pad + " " + title
 }
 
 // highlight styles the fuzzy-matched characters within a label.
@@ -390,8 +387,8 @@ func (m *model) finishRefresh() tea.Cmd {
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{textinput.Blink, tea.RequestBackgroundColor}
 	if m.refreshing {
-		for _, s := range m.stacks {
-			cmds = append(cmds, fetchStackCmd(s))
+		for _, s := range m.sources {
+			cmds = append(cmds, fetchSourceCmd(s))
 		}
 	}
 	if c := m.updatePreview(); c != nil {
@@ -408,7 +405,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderList()
 		return m, m.updatePreview()
 
-	case stackMsg:
+	case sourceMsg:
 		m.pending--
 		if m.fresh == nil {
 			m.fresh = map[string][]issue{}
@@ -416,7 +413,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.fetchErrs = append(m.fetchErrs, msg.err.Error())
 		} else {
-			m.fresh[msg.stack] = msg.issues
+			m.fresh[msg.source] = msg.issues
 		}
 		if m.pending > 0 {
 			return m, nil
@@ -596,10 +593,10 @@ func (m model) rightColumn() string {
 	r := m.currentRow()
 	if r == nil {
 		if len(m.entries) == 0 && m.refreshing {
-			return "\n" + stDim.Render("Loading tickets from "+strconv.Itoa(len(m.stacks))+" Jira site(s)…")
+			return "\n" + stDim.Render("Loading issues from "+strconv.Itoa(len(m.sources))+" source(s)…")
 		}
 		if len(m.entries) == 0 {
-			return "\n" + stDim.Render("No open tickets")
+			return "\n" + stDim.Render("No open issues")
 		}
 		return ""
 	}

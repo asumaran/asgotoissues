@@ -18,7 +18,7 @@ func testModel(t *testing.T) model {
 		{Key: "BETA-7", Stack: "beta", URL: "https://b.example/browse/BETA-7", Summary: "update readme",
 			Status: "To Do", StatusCat: "To Do", Type: "Story", Updated: time.Unix(100, 0)},
 	}
-	m := newModel([]stack{{Name: "alpha"}, {Name: "beta"}}, issueCache{FetchedAt: time.Now(), Issues: issues}, false, "> ")
+	m := newModel([]stack{jiraStack("alpha"), jiraStack("beta")}, issueCache{FetchedAt: time.Now(), Issues: issues}, false, "> ")
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = res.(model)
 	return m
@@ -78,14 +78,14 @@ func TestEscQuitsWithoutURL(t *testing.T) {
 	}
 }
 
-func TestStackMsgPartialFailureKeepsCache(t *testing.T) {
+func TestSourceMsgPartialFailureKeepsCache(t *testing.T) {
 	m := testModel(t)
 	m.refreshing = true
 	m.pending = 2
 	m.cache.FetchedAt = time.Unix(1000, 0)
 	// alpha fails, beta returns a new ticket
-	mm, _ := m.Update(stackMsg{stack: "alpha", err: errTest("boom")})
-	mm, _ = mm.(model).Update(stackMsg{stack: "beta", issues: []issue{
+	mm, _ := m.Update(sourceMsg{source: "alpha/jira", err: errTest("boom")})
+	mm, _ = mm.(model).Update(sourceMsg{source: "beta/jira", issues: []issue{
 		{Key: "BETA-8", Stack: "beta", URL: "u8", Summary: "brand new", Updated: time.Unix(500, 0)},
 	}})
 	res := mm.(model)

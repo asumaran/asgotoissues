@@ -41,7 +41,7 @@ func corpora(entries []*entry) (summaries, keys, metas []string) {
 	for _, e := range entries {
 		summaries = append(summaries, strings.ToLower(e.it.Summary))
 		keys = append(keys, strings.ToLower(e.it.Key)+" "+e.it.number())
-		meta := strings.ToLower(strings.Join([]string{e.it.Status, e.it.Type, e.it.Project, e.it.Stack, e.it.ParentKey}, " "))
+		meta := strings.ToLower(strings.Join([]string{e.it.Status, e.it.Type, e.it.Project, e.it.Stack, e.it.ParentKey, strings.Join(e.it.Meta, " ")}, " "))
 		metas = append(metas, meta)
 	}
 	return summaries, keys, metas
@@ -84,7 +84,7 @@ func matchBonus(e *entry, h hit, q string) int {
 		bonus += 30
 	case q == e.it.number():
 		bonus += 20
-	case strings.HasPrefix(lk, q) && strings.Contains(q, "-"):
+	case strings.HasPrefix(lk, q) && strings.ContainsAny(q, "-#"):
 		bonus += 10
 	}
 	if q == strings.ToLower(e.it.Stack) || q == strings.ToLower(e.it.Project) {

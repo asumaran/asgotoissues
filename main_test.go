@@ -67,7 +67,91 @@ func TestParseStacksPlainYAMLAndErrors(t *testing.T) {
 		t.Errorf("empty stacks should error")
 	}
 	if _, err := parseStacks("---\nstacks:\n  a:\n    github:\n      org: x\n---\n"); err == nil {
-		t.Errorf("no jira stack should error")
+		t.Errorf("a config where no stack lists a tracker should error")
+	}
+}
+
+func TestParseStacksIssuesKey(t *testing.T) {
+	stacks, err := parseStacks(`stacks:
+  both:
+    issues: [GitHub, jira, github]
+    jira:
+      base_url: https://both.atlassian.net
+    github:
+      org: acme
+      orgs: [acme, Octo]
+  mine:
+    issues: [github]
+    github:
+      org: me
+  off:
+    issues: []
+    jira:
+      base_url: https://off.atlassian.net
+  plain:
+    jira:
+      base_url: https://plain.atlassian.net
+    github:
+      org: ignored
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range stacks {
+		got[s.Name] = strings.Join(s.Trackers, ",") + " " + strings.Join(s.Orgs, ",")
+	}
+	want := map[string]string{
+		"both":  "github,jira acme,Octo", // order of `issues:`, duplicates dropped
+		"mine":  "github me",
+		"plain": "jira ignored", // no `issues:` key: Jira only, as before
+	}
+	if len(got) != len(want) {
+		t.Errorf("stacks = %v, want %v (an empty `issues:` turns a stack off)", got, want)
+	}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s = %q, want %q", name, got[name], w)
+		}
+	}
+	if ids := sourceIDs(sourcesOf(stacks)); ids != "both/github both/jira mine/github plain/jira" {
+		t.Errorf("sources = %s", ids)
+	}
+
+	for name, doc := range map[string]string{
+		"github without an org":   "stacks:\n  a:\n    issues: [github]\n",
+		"jira without a base_url": "stacks:\n  a:\n    issues: [jira]\n    github:\n      org: x\n",
+		"unknown tracker":         "stacks:\n  a:\n    issues: [linear]\n",
+	} {
+		if _, err := parseStacks(doc); err == nil || !strings.Contains(err.Error(), "a") {
+			t.Errorf("%s: err = %v, want an error naming the stack", name, err)
+		}
+	}
+}
+
+func sourceIDs(sources []source) string {
+	var ids []string
+	for _, s := range sources {
+		ids = append(ids, s.id())
+	}
+	return strings.Join(ids, " ")
+}
+
+func TestMergeStacksFallsBackPerSource(t *testing.T) {
+	stacks := []stack{{Name: "a", Trackers: []string{kindJira, kindGitHub}}}
+	cached := []issue{
+		{Key: "A-1", Stack: "a", Created: time.Unix(10, 0)}, // older cache: no Source, reads as jira
+		{Key: "repo#1", Stack: "a", Source: kindGitHub, Created: time.Unix(20, 0)},
+	}
+	fresh := map[string][]issue{
+		"a/github": {{Key: "repo#2", Stack: "a", Source: kindGitHub, Created: time.Unix(30, 0)}},
+	}
+	var keys []string
+	for _, it := range mergeStacks(stacks, fresh, cached) {
+		keys = append(keys, it.Key)
+	}
+	if got := strings.Join(keys, " "); got != "repo#2 A-1" {
+		t.Errorf("merged = %s, want the fresh github issue and the cached jira one", got)
 	}
 }
 
@@ -100,15 +184,17 @@ func TestParseJiraTime(t *testing.T) {
 	}
 }
 
+func jiraStack(name string) stack { return stack{Name: name, Trackers: []string{kindJira}} }
+
 func TestMergeStacksFallsBackToCache(t *testing.T) {
-	stacks := []stack{{Name: "a"}, {Name: "b"}}
+	stacks := []stack{jiraStack("a"), jiraStack("b")}
 	cached := []issue{
 		{Key: "A-1", Stack: "a", Created: time.Unix(10, 0)},
 		{Key: "B-1", Stack: "b", Created: time.Unix(20, 0)},
 		{Key: "B-2", Stack: "b", Created: time.Unix(30, 0)},
 	}
 	fresh := map[string][]issue{
-		"a": {{Key: "A-2", Stack: "a", Created: time.Unix(5, 0)}, {Key: "A-3", Stack: "a", Created: time.Unix(50, 0)}},
+		"a/jira": {{Key: "A-2", Stack: "a", Created: time.Unix(5, 0)}, {Key: "A-3", Stack: "a", Created: time.Unix(50, 0)}},
 	}
 	got := mergeStacks(stacks, fresh, cached)
 	keys := make([]string, len(got))

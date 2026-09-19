@@ -44,6 +44,11 @@ Files are split by concern but everything stays in `package main`:
   freshness debounce.
 - `filter.go` — entries, corpora, fuzzy hits, `matchBonus` ranking, row
   building, header-skipping navigation.
+- `match.go` — `findTight`, the fuzzy matcher with one correction: it is
+  greedy (first candidate for each rune, left to right), so a query that
+  occurs in one piece could still match scattered letters before it. When the
+  query occurs whole, that occurrence is the match, for the highlight and for
+  the score. The same file in every tool of the family.
 - `frame.go` — the single-frame layout shared by the family: `hline`, `fit`,
   `framed`, `frameHead`, `splitMain`, `scrollPos` and the section rows (`mainY`,
   `listY`, `frameRows`, each with or without the optional context line).

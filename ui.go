@@ -314,7 +314,7 @@ func highlight(label string, idx []int, selected bool) string {
 		}
 		run.Reset()
 	}
-	for i, r := range []rune(label) {
+	for i, r := range label { // i is a byte offset, like the matcher's
 		if set[i] != on {
 			flush()
 			on = set[i]

@@ -8,8 +8,6 @@ package main
 
 import (
 	"strings"
-
-	"github.com/sahilm/fuzzy"
 )
 
 // entry is one selectable ticket.
@@ -57,15 +55,15 @@ type hit struct {
 // per entry.
 func findHits(q string, summaries, keys, metas []string) map[int]hit {
 	hits := map[int]hit{}
-	for _, mt := range fuzzy.Find(q, summaries) {
+	for _, mt := range findTight(q, summaries) {
 		hits[mt.Index] = hit{score: mt.Score, idx: mt.MatchedIndexes}
 	}
-	for _, mt := range fuzzy.Find(q, keys) {
+	for _, mt := range findTight(q, keys) {
 		if h, ok := hits[mt.Index]; !ok || mt.Score > h.score {
 			hits[mt.Index] = hit{score: mt.Score, key: true}
 		}
 	}
-	for _, mt := range fuzzy.Find(q, metas) {
+	for _, mt := range findTight(q, metas) {
 		if h, ok := hits[mt.Index]; !ok || mt.Score > h.score {
 			hits[mt.Index] = hit{score: mt.Score}
 		}

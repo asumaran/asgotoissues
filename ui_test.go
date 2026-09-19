@@ -310,3 +310,40 @@ func TestSelectedRowKeepsItsMatches(t *testing.T) {
 		t.Errorf("cut = %q", cut)
 	}
 }
+
+func TestQuestionMarkExpandsTheHelp(t *testing.T) {
+	m := testModel(t) // 120x30
+	count := func(m model) int { return len(strings.Split(m.render(), "\n")) }
+	if count(m) != 30 || !strings.Contains(ansi.Strip(m.render()), "? help") {
+		t.Fatalf("the folded help offers ?: %d lines", count(m))
+	}
+	res, _ := m.handleKey(tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = res.(model)
+	view := ansi.Strip(m.render())
+	if !m.help.ShowAll || count(m) != 30 || m.ti.Value() != "" {
+		t.Fatalf("? with an empty filter expands the help and is not typed: ShowAll=%v lines=%d filter=%q", m.help.ShowAll, count(m), m.ti.Value())
+	}
+	for _, want := range []string{"pgup/pgdn", "⌥↑/⌥↓", "scroll the description", "resize the list", "open in browser"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expanded help lacks %q", want)
+		}
+	}
+	res, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = res.(model)
+	if m.help.ShowAll || cmd != nil && m.openURL != "" {
+		t.Errorf("esc folds the help before it quits")
+	}
+	for _, r := range "x?" {
+		res, _ = m.handleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = res.(model)
+	}
+	if m.help.ShowAll || m.ti.Value() != "x?" {
+		t.Errorf("filter = %q, ShowAll = %v, want ? typed as text", m.ti.Value(), m.help.ShowAll)
+	}
+	// a fetch error takes one line, whatever the help was doing
+	m.help.ShowAll, m.netErr = true, "work: HTTP 401"
+	m.resize()
+	if m.footH() != 1 || count(m) != 30 {
+		t.Errorf("a message is one line: footH=%d lines=%d", m.footH(), count(m))
+	}
+}

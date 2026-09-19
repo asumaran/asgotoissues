@@ -62,8 +62,7 @@ func stateStyle(state string) lipgloss.Style {
 // ---- key bindings ----
 
 type keyMap struct {
-	Up       key.Binding
-	Down     key.Binding
+	Nav      listNav
 	Select   key.Binding
 	Cancel   key.Binding
 	PrevUp   key.Binding
@@ -71,26 +70,41 @@ type keyMap struct {
 	Shrink   key.Binding
 	Grow     key.Binding
 	Filter   key.Binding
+	Help     key.Binding
 }
 
+// ShortHelp is the folded help line: the tool's own actions, the help and the
+// quit keys. Moving, scrolling and resizing are in the expanded help, so the
+// line stays short enough for a narrow popup (a cut line loses the quit keys
+// first).
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Filter, k.Select, k.PrevDown, k.Shrink, k.Cancel}
+	return []key.Binding{k.Filter, k.Select, k.Help, k.Cancel}
 }
-func (k keyMap) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+
+// FullHelp is what `?` expands the help into, one column per group: the
+// filter and the preview, the list, the tool's actions, help and quit.
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Filter, k.PrevUp, k.Shrink},
+		{k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
+		{k.Select},
+		{k.Help, k.Cancel},
+	}
+}
 
 func defaultKeys() keyMap {
 	return keyMap{
-		Up:       key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("↑/^p", "up")),
-		Down:     key.NewBinding(key.WithKeys("down", "ctrl+n"), key.WithHelp("↓/^n", "down")),
+		Nav:      defaultListNav(),
 		Select:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open in browser")),
 		Cancel:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc/q", "quit")),
-		PrevUp:   key.NewBinding(key.WithKeys("shift+up", "pgup"), key.WithHelp("⇧↑", "")),
-		PrevDown: key.NewBinding(key.WithKeys("shift+down", "pgdown"), key.WithHelp("⇧↓", "scroll desc")),
-		Shrink:   key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←/⇧→", "resize")),
+		PrevUp:   key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑/⇧↓", "scroll the description")),
+		PrevDown: key.NewBinding(key.WithKeys("shift+down")),
+		Shrink:   key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←/⇧→", "resize the list")),
 		Grow:     key.NewBinding(key.WithKeys("shift+right")),
 		// Help-only entry: a binding without keys is disabled and the help
 		// bubble would skip it. Nothing ever matches against it.
 		Filter: key.NewBinding(key.WithKeys("type"), key.WithHelp("type", "filter")),
+		Help:   helpKey,
 	}
 }
 
@@ -184,7 +198,25 @@ func (m *model) prevW() int    { return max(10, m.detailsW()-2) }
 
 // bodyH is the height of the main section: everything but the frame's own
 // lines and the help.
-func (m *model) bodyH() int { return max(1, m.height-frameRows(false)-1) }
+func (m *model) bodyH() int { return max(1, m.height-frameRows(false)-m.footH()) }
+
+// footH is the height of the foot: a message takes one line, the help more
+// while `?` has it expanded; the main section keeps at least minBodyH.
+func (m *model) footH() int {
+	if m.footMsg() != "" {
+		return 1
+	}
+	return helpHeight(m.help, m.keys, m.height-frameRows(false)-minBodyH)
+}
+
+const minBodyH = 4
+
+func (m *model) toggleHelp() tea.Cmd {
+	m.help.ShowAll = !m.help.ShowAll
+	m.resize()
+	m.renderList()
+	return m.updatePreview()
+}
 
 func (m *model) resize() {
 	m.listVP.SetWidth(m.listW())
@@ -447,6 +479,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case foldsHelp(msg, m.help):
+		return m, m.toggleHelp() // esc folds the help before it quits
+	case isHelpKey(msg, m.ti.Value()):
+		return m, m.toggleHelp()
 	case msg.String() == "q" && m.ti.Value() == "":
 		// q quits only while the filter is empty; otherwise it is text.
 		return m, tea.Quit
@@ -458,12 +494,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, nil
-	case key.Matches(msg, m.keys.Up):
-		m.cursor = nextIssue(m.rows, m.cursor, -1)
-		m.renderList()
-		return m, m.updatePreview()
-	case key.Matches(msg, m.keys.Down):
-		m.cursor = nextIssue(m.rows, m.cursor, +1)
+	case m.keys.Nav.matches(msg):
+		m.cursor = m.keys.Nav.move(msg, m.cursor, len(m.rows), m.listVP.Height(),
+			func(i int) bool { return m.rows[i].kind == "issue" })
 		m.renderList()
 		return m, m.updatePreview()
 	case key.Matches(msg, m.keys.Shrink):
@@ -533,7 +566,10 @@ func (m model) render() string {
 	}
 	out = append(out, splitMain(m.listLines(), strings.Split(m.rightColumn(), "\n"),
 		m.listW(), m.detailsW(), listPos(&m.listVP, func(i int) bool { return i < len(m.rows) && m.rows[i].kind != "header" }), pos)...)
-	out = append(out, framed(w, m.footer()), hline(w, "╰", "╯", "", ""))
+	for _, l := range m.footLines() {
+		out = append(out, framed(w, l))
+	}
+	out = append(out, hline(w, "╰", "╯", "", ""))
 	return strings.Join(out, "\n")
 }
 
@@ -582,11 +618,19 @@ func (m model) rightColumn() string {
 
 // footer is the key help, or the network error while there is one. The
 // refresh mark lives next to the counter.
-func (m model) footer() string {
+// footMsg is what takes the help's place while there is something to say.
+func (m model) footMsg() string {
 	if m.netErr != "" {
 		return stError.Render(truncate(m.netErr, max(0, m.width-4)))
 	}
-	return truncate(m.help.View(m.keys), max(0, m.width-4))
+	return ""
+}
+
+func (m model) footLines() []string {
+	if msg := m.footMsg(); msg != "" {
+		return []string{msg}
+	}
+	return helpLines(m.help, m.keys, m.width-4, m.footH())
 }
 
 // newFilterInput builds the focused filter textinput. The prompt string

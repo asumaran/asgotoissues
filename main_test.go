@@ -1,6 +1,7 @@
 package main
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"strings"
 	"testing"
 	"time"
@@ -302,12 +303,14 @@ func TestNavigationSkipsHeaders(t *testing.T) {
 	if rows[cur].e.it.Key != "PLAT-2099" {
 		t.Fatalf("first = %s", rows[cur].e.it.Key)
 	}
-	cur = nextIssue(rows, cur, +1)
-	cur = nextIssue(rows, cur, +1) // jumps over the "mo" header
+	nav, down := defaultListNav(), tea.KeyPressMsg{Code: tea.KeyDown}
+	isIssue := func(i int) bool { return rows[i].kind == "issue" }
+	cur = nav.move(down, cur, len(rows), 10, isIssue)
+	cur = nav.move(down, cur, len(rows), 10, isIssue) // jumps over the "mo" header
 	if rows[cur].e.it.Key != "SHOP-602" {
 		t.Errorf("after two downs = %s", rows[cur].e.it.Key)
 	}
-	if nextIssue(rows, cur, +1) != cur {
+	if nav.move(down, cur, len(rows), 10, isIssue) != cur {
 		t.Errorf("down at the end should stay put")
 	}
 }

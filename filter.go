@@ -142,14 +142,3 @@ func firstIssue(rows []row) int {
 	}
 	return -1
 }
-
-// nextIssue walks from cur in direction dir (+1/-1) to the next selectable
-// row, returning cur when there is none.
-func nextIssue(rows []row, cur, dir int) int {
-	for i := cur + dir; i >= 0 && i < len(rows); i += dir {
-		if rows[i].kind == "issue" {
-			return i
-		}
-	}
-	return cur
-}

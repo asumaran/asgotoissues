@@ -76,8 +76,10 @@ The filter input is focused on open, so just type. Search is fuzzy over the
 summary, the key (`2099` finds `PLAT-2099`, so does `plat-2099`; `12` finds
 `tool#12`), and the status, type, project or repo, stack, parent key and
 labels (`uat`, `sub-task`, `shop`, `bug`).
-`↑/↓` (or `ctrl+p`/`ctrl+n`) move between issues, `shift+↓`/`shift+↑` (or
-PgDn/PgUp) scroll the description, the mouse wheel moves the selection over
+`↑/↓` (or `ctrl+p`/`ctrl+n`) move between issues, PgDn/PgUp move a page,
+`alt+↑`/`alt+↓` (or Home/End) go to the top or the bottom of the list,
+`shift+↓`/`shift+↑` scroll the description, `?` (while the filter is empty) or
+`f1` expands the help line into every key, the mouse wheel moves the selection over
 the list and scrolls the description anywhere else, `shift+←`/`shift+→` resize the list (the split is
 remembered; the list takes a quarter of the width by default), `enter` opens the
 issue in the browser, a click selects an issue, and `esc` closes (so does

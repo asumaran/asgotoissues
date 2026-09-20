@@ -1,3 +1,7 @@
+## v0.7.2 (2026-09-19)
+
+* refactor: move firstLine to the shared text.go (c382b24)
+
 ## v0.7.1 (2026-09-19)
 
 * refactor: share the last duplicated helpers (30ef77b)

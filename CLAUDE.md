@@ -196,7 +196,7 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   retries. Errors take the help line, never a modal; the refresh mark sits
   on the edge over the input.
 - **Selection is deliberately just "open in browser"** (`open` on macOS,
-  `xdg-open` elsewhere, `ASGOTOISSUES_OPEN_CMD` override), executed after quit
+  `xdg-open` elsewhere, `ASGOTOISSUES_OPENER` override), executed after quit
   because quitting closes the popup. Jumping to a checkout / creating a
   worktree for an issue was considered and rejected for v1.
 - **Never query the terminal behind bubbletea's back**: `Init` issues
@@ -230,14 +230,14 @@ issues cached by older versions, wiki conversion, ranking, grouping, key handlin
 refresh failure, View content). `TestMain` points `HERDR_PLUGIN_STATE_DIR`
 at a temp dir so tests never touch the real cache. For end-to-end TUI
 verification without a TTY, drive the binary in a pty (answer OSC 10/11 +
-CSI 6n + DA1 queries, replay keystrokes, set `ASGOTOISSUES_OPEN_CMD` to a script
+CSI 6n + DA1 queries, replay keystrokes, set `ASGOTOISSUES_OPENER` to a script
 that logs argv) — see asgoto's `scripts/demo/driver.py`.
 
 For end-to-end verification without a TTY, `scripts/pty-check.py ./asgotoissues`
 (python3 + `pyte`) spawns the binary on a pty, answers the terminal queries,
 replays keystrokes and asserts on pyte-rendered frames, in a throwaway sandbox
 (fake `HOME`, synthetic `ASGOTOISSUES_CONFIG`, empty netrc, a fresh synthetic
-ticket cache so nothing is fetched, a logging stub as `ASGOTOISSUES_OPEN_CMD`). The v2 renderer repaints with scroll regions, which pyte ignores, so the
+ticket cache so nothing is fetched, a logging stub as `ASGOTOISSUES_OPENER`). The v2 renderer repaints with scroll regions, which pyte ignores, so the
 driver forces a full redraw (pty resize + SIGWINCH) before reading a frame.
 
 ## Commits & branches

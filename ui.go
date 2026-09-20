@@ -610,15 +610,15 @@ func (m model) footLines() []string {
 }
 
 // openInBrowser hands the URL to the OS after the TUI has exited.
-// ASGOTOISSUES_OPEN_CMD overrides the opener (tests log the argv instead).
+// ASGOTOISSUES_OPENER overrides the opener (tests log the argv instead).
 func openInBrowser(url string) {
 	if url == "" {
 		return
 	}
 	var cmd *exec.Cmd
 	switch {
-	case os.Getenv("ASGOTOISSUES_OPEN_CMD") != "":
-		cmd = exec.Command(os.Getenv("ASGOTOISSUES_OPEN_CMD"), url)
+	case os.Getenv("ASGOTOISSUES_OPENER") != "":
+		cmd = exec.Command(os.Getenv("ASGOTOISSUES_OPENER"), url)
 	case runtime.GOOS == "darwin":
 		cmd = exec.Command("open", url)
 	default:

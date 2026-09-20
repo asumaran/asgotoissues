@@ -126,7 +126,7 @@ herdr plugin link "$PWD"   # register the working copy (no build step)
 
 Runtime state (`issuecache.json`) lives in `HERDR_PLUGIN_STATE_DIR`;
 standalone runs fall back to `~/.config/herdr/asgotoissues-tui/`.
-`ASGOTOISSUES_OPEN_CMD` replaces the browser opener (tests use it to capture the
+`ASGOTOISSUES_OPENER` replaces the browser opener (tests use it to capture the
 URL).
 
 ## Releasing

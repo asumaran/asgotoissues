@@ -6,7 +6,7 @@ Spawns the binary on a pty, answers the terminal queries bubbletea sends
 with pyte. Everything runs in a throwaway sandbox: a fake HOME, a synthetic
 config (ASGOTOISSUES_CONFIG), an empty netrc, a fresh synthetic ticket cache (so
 nothing is fetched) and a logging stub instead of the browser
-(ASGOTOISSUES_OPEN_CMD). It never reads the real config and never talks to Jira
+(ASGOTOISSUES_OPENER). It never reads the real config and never talks to Jira
 or GitHub (gh does not have to be installed).
 
 Usage: scripts/pty-check.py ./asgotoissues   (needs python3 + pyte)
@@ -159,7 +159,7 @@ opener = write(os.path.join(SANDBOX, "opener"), '#!/bin/sh\nprintf "%%s\\n" "$1"
 
 def session():
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", HOME=home, NETRC=netrc,
-               ASGOTOISSUES_CONFIG=config, ASGOTOISSUES_OPEN_CMD=opener, XDG_CONFIG_HOME=os.path.join(home, ".config"))
+               ASGOTOISSUES_CONFIG=config, ASGOTOISSUES_OPENER=opener, XDG_CONFIG_HOME=os.path.join(home, ".config"))
     for k in ("HERDR_PLUGIN_STATE_DIR", "JIRA_TOKEN_ACME", "JIRA_TOKEN_GLOBEX"):
         env.pop(k, None)
     if os.path.exists(open_log): os.remove(open_log)

@@ -52,22 +52,11 @@ type hit struct {
 	key   bool  // best score came from the key corpus
 }
 
-// findHits runs the fuzzy matcher over all corpora and keeps the best score
-// per entry.
+// findHits matches the query's terms over all corpora (see findFields).
 func findHits(q string, summaries, keys, metas []string) map[int]hit {
 	hits := map[int]hit{}
-	for _, mt := range findTight(q, summaries) {
-		hits[mt.Index] = hit{score: mt.Score, idx: mt.MatchedIndexes}
-	}
-	for _, mt := range findTight(q, keys) {
-		if h, ok := hits[mt.Index]; !ok || mt.Score > h.score {
-			hits[mt.Index] = hit{score: mt.Score, key: true}
-		}
-	}
-	for _, mt := range findTight(q, metas) {
-		if h, ok := hits[mt.Index]; !ok || mt.Score > h.score {
-			hits[mt.Index] = hit{score: mt.Score}
-		}
+	for i, h := range findFields(q, summaries, keys, metas) {
+		hits[i] = hit{score: h.Score, idx: h.Idx[0], key: h.Field == 1}
 	}
 	return hits
 }

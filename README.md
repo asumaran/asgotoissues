@@ -72,7 +72,7 @@ to configure beyond `gh auth login`. It is only needed by stacks that list
 
 ## Usage
 
-The filter input is focused on open, so just type. Search is fuzzy over the
+The filter input is focused on open, so just type. A query of several words matches them in any order (`login fix` finds "fix login flow"), and a word starting with `'` must occur as typed instead of fuzzily (`'dex`). Search is fuzzy over the
 summary, the key (`2099` finds `PLAT-2099`, so does `plat-2099`; `12` finds
 `tool#12`), and the status, type, project or repo, stack, parent key and
 labels (`uat`, `sub-task`, `shop`, `bug`).

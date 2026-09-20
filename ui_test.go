@@ -362,39 +362,57 @@ func TestSelectedRowKeepsItsMatches(t *testing.T) {
 	}
 }
 
-func TestQuestionMarkExpandsTheHelp(t *testing.T) {
+// TestPanel: f1 lays the keys over a frame that keeps its size, takes
+// every key while it is open, and esc closes it before it quits. `?` is text
+// for the filter. This tool has no options, so the panel lists the keys alone.
+func TestPanel(t *testing.T) {
 	m := testModel(t) // 120x30
-	count := func(m model) int { return len(strings.Split(m.render(), "\n")) }
-	if count(m) != 30 || !strings.Contains(ansi.Strip(m.render()), "? help") {
-		t.Fatalf("the folded help offers ?: %d lines", count(m))
-	}
-	res, _ := m.handleKey(tea.KeyPressMsg{Code: '?', Text: "?"})
-	m = res.(model)
-	view := ansi.Strip(m.render())
-	if !m.help.ShowAll || count(m) != 30 || m.ti.Value() != "" {
-		t.Fatalf("? with an empty filter expands the help and is not typed: ShowAll=%v lines=%d filter=%q", m.help.ShowAll, count(m), m.ti.Value())
-	}
-	for _, want := range []string{"pgup/pgdn", "⌥↑/⌥↓", "scroll the description", "resize the list", "open in browser"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("expanded help lacks %q", want)
+	press := func(keys ...tea.KeyPressMsg) {
+		for _, k := range keys {
+			res, _ := m.Update(k)
+			m = res.(model)
 		}
 	}
-	res, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	closed := strings.Split(ansi.Strip(m.render()), "\n")
+	if foot := closed[len(closed)-2]; !strings.Contains(foot, "f1 help") {
+		t.Fatalf("the help line offers the panel: %q", foot)
+	}
+	list := m.listVP.Height()
+	press(tea.KeyPressMsg{Code: tea.KeyF1})
+	open := strings.Split(ansi.Strip(m.render()), "\n")
+	if len(open) != len(closed) || m.listVP.Height() != list {
+		t.Fatalf("the panel changed the frame: %d lines (list %d), want %d (list %d)", len(open), m.listVP.Height(), len(closed), list)
+	}
+	all := strings.Join(open, "\n")
+	if strings.Contains(all, "Options") {
+		t.Errorf("no options here, so no such section:\n%s", all)
+	}
+	for _, want := range []string{"╭─ help ", "Keys", "esc close", "pgup/pgdn", "⌥↑/⌥↓", "scroll the description", "resize the list"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the panel lacks %q:\n%s", want, all)
+		}
+	}
+	for i, l := range open {
+		if ansi.StringWidth(l) != m.width {
+			t.Errorf("line %d is %d cells wide, want %d", i, ansi.StringWidth(l), m.width)
+		}
+	}
+	cursor := m.cursor
+	press(tea.KeyPressMsg{Code: 'z', Text: "z"}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.ti.Value() != "" || m.cursor != cursor || !m.panel.open {
+		t.Errorf("the panel should take every key: filter %q, cursor %d -> %d, open %v", m.ti.Value(), cursor, m.cursor, m.panel.open)
+	}
+	res, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = res.(model)
-	if m.help.ShowAll || cmd != nil && m.openURL != "" {
-		t.Errorf("esc folds the help before it quits")
+	if m.panel.open || cmd != nil {
+		t.Errorf("esc closes the panel and nothing else: open=%v cmd=%v", m.panel.open, cmd)
 	}
-	for _, r := range "x?" {
-		res, _ = m.handleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
-		m = res.(model)
+	press(tea.KeyPressMsg{Code: 'x', Text: "x"}, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if m.ti.Value() != "x?" || m.panel.open {
+		t.Errorf("? is text: filter %q, panel open %v", m.ti.Value(), m.panel.open)
 	}
-	if m.help.ShowAll || m.ti.Value() != "x?" {
-		t.Errorf("filter = %q, ShowAll = %v, want ? typed as text", m.ti.Value(), m.help.ShowAll)
-	}
-	// a fetch error takes one line, whatever the help was doing
-	m.help.ShowAll, m.netErr = true, "work: HTTP 401"
-	m.resize()
-	if m.footH() != 1 || count(m) != 30 {
-		t.Errorf("a message is one line: footH=%d lines=%d", m.footH(), count(m))
+	press(tea.KeyPressMsg{Code: tea.KeyF1})
+	if !m.panel.open {
+		t.Errorf("f1 opens the panel whatever the filter says")
 	}
 }

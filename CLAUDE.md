@@ -67,8 +67,11 @@ Files are split by concern but everything stays in `package main`:
   herdr's popup), the placeholder, the `(dev)` mark on the edge over the
   input. The same
   file in every tool of the family.
-- `helpfoot.go` — the help at the foot: the key that expands it, its height
-  and its lines cut to the width. The same file in every tool of the family.
+- `helpfoot.go` — the help line at the foot, cut to the width, and the key
+  that opens the panel. The same file in every tool of the family.
+- `panel.go` — the panel `f1` opens over the frame: options to change in
+  place and every key under them (`option`, `panel`, `panelLines`,
+  `overlay`). The same file in every tool of the family.
 - `listnav.go` — `listNav`: the keys that move the cursor through a list and
   where each one takes it, group headers skipped. The same file in every tool
   of the family.
@@ -121,7 +124,7 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `ctrl+p`/`ctrl+n` a row, `pgup`/`pgdn` a page, `alt+↑`/`alt+↓` or
   `home`/`end` the ends. `home`/`end` are taken from the filter input's caret
   on purpose (`←`/`→` and `ctrl+e` still move it). The preview scrolls with
-  `shift+↑`/`shift+↓` only. The keys are listed in the expanded help.
+  `shift+↑`/`shift+↓` only. The keys are listed in the panel.
 - **The filter input** comes from `prompt.go` (the same file in every tool of
   the family). Inside herdr's popup the prompt is the arrow alone, because the
   pane's title (`[[panes]] title` in the manifest, the tool's name) already
@@ -131,14 +134,18 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   prompt.
   herdr sets `HERDR_PLUGIN_ENTRYPOINT_ID` for a plugin pane; that is how the
   two cases are told apart.
-- **Help**: the line at the foot shows the tool's own actions, `? help` and the
-  quit keys; `?` expands it into every key in columns and the main section
-  gives way (`helpfoot.go`, the same file in every tool of the family). `?`
-  expands only while the filter is empty, otherwise it is text, like `q`;
-  `f1` always does; `esc` folds the help before it quits. Moving, scrolling
-  and resizing live in the expanded help only, so the folded line stays short
-  enough for a narrow popup. A message (error, notice) takes the help's place
-  on one line.
+- **Help and options**: the line at the foot shows the tool's own actions,
+  the panel's key and the quit keys (`helpfoot.go`). `f1` opens the panel (`panel.go`, the same file in
+  every tool of the family): the options on top, to change with `←`/`→` or
+  `space`, and every key in columns under them, laid out by bubbles' `help`
+  from `FullHelp()`. The panel is spliced over the middle of the frame, which
+  keeps its size; while it is open it takes every key and the mouse, and `esc`
+  closes it before it does anything else. `?` is not a help key: the filter
+  has the focus, so it is text. Moving, scrolling and resizing are listed in
+  the panel only, so the help line stays short enough for a narrow popup. A
+  message (error, notice) takes the help line's place.
+  This tool has no options, so the panel lists the keys alone and the help
+  line says `f1 help`.
 - **Filter matches** look the same in every tool of the family and come from
   one place, `highlight.go` (the same file in each repo; it also owns `stSel`
   and `stMatch`): a match is the match color plus an underline on top of the

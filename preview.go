@@ -7,14 +7,11 @@ package main
 // invalidation.
 
 import (
-	"fmt"
 	"github.com/charmbracelet/x/ansi"
 	"strconv"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/glamour/v2"
 )
 
 type previewMsg struct {
@@ -32,36 +29,16 @@ func renderPreviewCmd(it issue, width int, style string) tea.Cmd {
 	return func() tea.Msg {
 		md := it.markdown()
 		content, err := renderMarkdown(md, width, style)
-		if err != nil {
+		switch {
+		case err != nil:
 			content = md // raw text beats nothing
+		case content == "":
+			content = stDim.Render("(no description)")
+		default:
+			content = "\n" + content // a blank line under the header
 		}
 		return previewMsg{key: key, style: style, content: content}
 	}
-}
-
-// renderMarkdown renders with a fixed glamour standard style ("dark" or
-// "light"). The style is never auto-detected here: bubbletea owns the
-// terminal, so the model asks it for the background color (Init →
-// RequestBackgroundColor) and passes the answer down. glamour's WithAutoStyle
-// would query the terminal itself, and that reply races bubbletea's input
-// reader and ends up typed into the filter as literal "rgb:..." text.
-func renderMarkdown(body string, width int, style string) (string, error) {
-	if strings.TrimSpace(body) == "" {
-		return stDim.Render("(no description)"), nil
-	}
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(style),
-		glamour.WithWordWrap(width),
-		glamour.WithEmoji(),
-	)
-	if err != nil {
-		return "", err
-	}
-	out, err := r.Render(body)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(out, "\n"), nil
 }
 
 // previewHeader is the instant (non-glamour) header above the rendered body.
@@ -75,22 +52,4 @@ func previewHeader(it issue, width int) string {
 	title := truncate(it.Summary, width)
 	status := stateStyle(it.state()).Render("[" + it.Status + "]")
 	return stTitle.Render(title) + "\n" + status + " " + stDim.Render(truncate(meta, width-ansi.StringWidth(it.Status)-3))
-}
-
-// relTime formats a timestamp as a compact "2h ago" style age.
-func relTime(t time.Time) string {
-	if t.IsZero() {
-		return "?"
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	}
 }

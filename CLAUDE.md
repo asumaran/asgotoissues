@@ -49,6 +49,20 @@ Files are split by concern but everything stays in `package main`:
   occurs in one piece could still match scattered letters before it. When the
   query occurs whole, that occurrence is the match, for the highlight and for
   the score. The same file in every tool of the family.
+- `text.go` — `truncate`, `padRight`, `padLeft`: fitting text, styled or not,
+  into cells. The same file in every tool of the family.
+- `statedir.go` — `stateDirFor`: the state dir herdr injects, or a fixed path
+  under the config home when the tool runs on its own. The same file in every
+  tool of the family that keeps state.
+- `age.go` — `compactAge` (`5m`, `3h`, `2d`, `6w`, `2y`) for a list column and
+  `relTime` (`3h ago`) for a sentence. The same file in every tool of the
+  family that shows an age.
+- `markdown.go` — `renderMarkdown` (glamour with a fixed style, never
+  auto-detected), `glamourStyle` and `setPreviewStyle`. The same file in every
+  tool of the family that renders Markdown.
+- `listmouse.go` — `inList`, `rowUnder`, `wheelKey`: the mouse over the list.
+  The wheel goes through the same code as the arrows; a click moves the
+  cursor and never opens anything. The same file in every tool of the family.
 - `prompt.go` — the filter input: its prompt (with the tool's name only outside
   herdr's popup), the placeholder, the `(dev)` mark after the counter. The same
   file in every tool of the family.

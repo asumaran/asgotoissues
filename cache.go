@@ -12,19 +12,6 @@ import (
 	"time"
 )
 
-func stateDir() string {
-	if dir := os.Getenv("HERDR_PLUGIN_STATE_DIR"); dir != "" {
-		return dir
-	}
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		if h, err := os.UserHomeDir(); err == nil {
-			base = filepath.Join(h, ".config")
-		}
-	}
-	return filepath.Join(base, "herdr", "asgotoissues-tui")
-}
-
 // cacheFresh is how recent the cached snapshot must be to skip the background
 // refresh entirely. It only debounces rapid reopen cycles; older snapshots
 // still render immediately while they revalidate.
@@ -54,3 +41,6 @@ func saveCache(c issueCache) {
 		_ = os.WriteFile(path, data, 0o644)
 	}
 }
+
+// stateDir is where asgotoissues keeps its runtime state.
+func stateDir() string { return stateDirFor("asgotoissues") }

@@ -23,13 +23,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func truncate(s string, width int) string {
-	if width < 1 {
-		return ""
-	}
-	return ansi.Truncate(s, width, "…")
-}
-
 // ---- styles ----
 
 var (
@@ -347,19 +340,6 @@ func (m *model) updatePreview() tea.Cmd {
 	return renderPreviewCmd(r.e.it, m.prevW(), m.previewStyle)
 }
 
-// setPreviewStyle switches the glamour style once the terminal background is
-// known. Cached renders carry the old palette, so they are dropped and the
-// current preview is rendered again.
-func (m *model) setPreviewStyle(style string) tea.Cmd {
-	if style == m.previewStyle {
-		return nil
-	}
-	m.previewStyle = style
-	m.renders = map[string]string{}
-	m.prevKey = ""
-	return m.updatePreview()
-}
-
 // ---- refresh plumbing ----
 
 // finishRefresh swaps in the merged list. The snapshot is always persisted
@@ -429,11 +409,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishRefresh()
 
 	case tea.BackgroundColorMsg:
-		style := "dark"
-		if !msg.IsDark() {
-			style = "light"
-		}
-		return m, m.setPreviewStyle(style)
+		return m, m.setPreviewStyle(glamourStyle(msg))
 
 	case previewMsg:
 		if msg.style != m.previewStyle { // rendered before the style flipped
@@ -455,11 +431,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Over the list the wheel moves the selection, as in asgitlog; anywhere
 		// else it scrolls the preview.
 		if m.overList(msg.X, msg.Y) {
-			switch msg.Button {
-			case tea.MouseWheelUp:
-				return m.handleKey(tea.KeyPressMsg{Code: tea.KeyUp})
-			case tea.MouseWheelDown:
-				return m.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+			if k, ok := wheelKey(msg); ok {
+				return m.handleKey(k)
 			}
 			return m, nil
 		}
@@ -528,7 +501,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // overList reports whether a screen cell is inside the list.
 func (m *model) overList(x, y int) bool {
-	return x >= 1 && x <= m.listW() && y >= listY(false) && y < listY(false)+m.bodyH()
+	return inList(x, y, listY(false), m.listW(), m.bodyH())
 }
 
 // handleClick moves the selection to the ticket row under a left click on the
@@ -537,8 +510,8 @@ func (m model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if msg.Button != tea.MouseLeft || !m.overList(msg.X, msg.Y) {
 		return m, nil
 	}
-	i := msg.Y - listY(false) + m.listVP.YOffset()
-	if i < 0 || i >= len(m.rows) || m.rows[i].kind != "issue" || i == m.cursor {
+	i, ok := rowUnder(msg.Y, listY(false), m.listVP.YOffset(), len(m.rows))
+	if !ok || m.rows[i].kind != "issue" || i == m.cursor {
 		return m, nil
 	}
 	m.cursor = i

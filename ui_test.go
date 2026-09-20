@@ -19,7 +19,7 @@ func testModel(t *testing.T) model {
 		{Key: "BETA-7", Stack: "beta", URL: "https://b.example/browse/BETA-7", Summary: "update readme",
 			Status: "To Do", StatusCat: "To Do", Type: "Story", Updated: time.Unix(100, 0)},
 	}
-	m := newModel([]stack{jiraStack("alpha"), jiraStack("beta")}, issueCache{FetchedAt: time.Now(), Issues: issues}, false, "> ")
+	m := newModel([]stack{jiraStack("alpha"), jiraStack("beta")}, issueCache{FetchedAt: time.Now(), Issues: issues}, false)
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = res.(model)
 	return m
@@ -137,7 +137,7 @@ func TestFrameGeometry(t *testing.T) {
 	plain := strings.Split(ansi.Strip(m.render()), "\n")
 	if !strings.HasPrefix(plain[0], "╭") || !strings.HasPrefix(plain[len(plain)-1], "╰") ||
 		!strings.Contains(plain[mainY(false)], "┬") || !strings.Contains(plain[0], "2/2") ||
-		!strings.HasPrefix(plain[1], "│ > ") {
+		!strings.HasPrefix(plain[1], "│ asgotoissues ❯ ") {
 		t.Errorf("frame sections misplaced:\n%s", strings.Join(plain, "\n"))
 	}
 	if help := plain[len(plain)-2]; !strings.Contains(help, "type filter") || !strings.Contains(help, "esc/q quit") {
@@ -264,7 +264,7 @@ func TestListPositionShowsOnlyWhileTheListOverflows(t *testing.T) {
 		}
 		issues = append(issues, issue{Key: "K-" + strconv.Itoa(i), Stack: stack, URL: "u" + strconv.Itoa(i), Summary: "s", Created: time.Unix(int64(1000-i), 0)})
 	}
-	m = newModel([]stack{jiraStack("alpha"), jiraStack("beta")}, issueCache{FetchedAt: time.Now(), Issues: issues}, false, "> ")
+	m = newModel([]stack{jiraStack("alpha"), jiraStack("beta")}, issueCache{FetchedAt: time.Now(), Issues: issues}, false)
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 16})
 	m = res.(model)
 	h := m.listVP.Height()

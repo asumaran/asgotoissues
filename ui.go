@@ -33,8 +33,6 @@ func truncate(s string, width int) string {
 // ---- styles ----
 
 var (
-	stPrompt  = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
-	stDev     = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
 	stHeader  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 	stDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	stTitle   = lipgloss.NewStyle().Bold(true)
@@ -150,13 +148,13 @@ type model struct {
 
 // newModel builds the model from the cached snapshot. stale starts the
 // background refresh of every stack from Init.
-func newModel(stacks []stack, cache issueCache, stale bool, prompt string) model {
+func newModel(stacks []stack, cache issueCache, stale bool) model {
 	m := model{
 		stacks:       stacks,
 		sources:      sourcesOf(stacks),
 		cache:        cache,
 		refreshing:   stale,
-		ti:           newFilterInput(prompt),
+		ti:           newFilterInput("asgotoissues", "Search by title, key, status, repo…"),
 		listVP:       viewport.New(viewport.WithWidth(50), viewport.WithHeight(20)),
 		prevVP:       viewport.New(viewport.WithWidth(40), viewport.WithHeight(17)),
 		help:         help.New(),
@@ -228,6 +226,7 @@ func (m *model) resize() {
 	}
 	m.prevVP.SetHeight(prevH)
 	m.help.SetWidth(max(0, m.width-4))
+	sizeInput(&m.ti, m.width-4)
 }
 
 // resizeList moves the divider between the list and the preview by one step.
@@ -559,7 +558,7 @@ func (m model) View() tea.View {
 // it. There is no context line: the stacks already head their groups.
 func (m model) render() string {
 	w := m.width
-	out := frameHead(w, "", m.counter(), m.ti.View())
+	out := frameHead(w, "", withDevMark(m.counter()), m.ti.View())
 	pos := ""
 	if m.currentRow() != nil {
 		pos = scrollPos(&m.prevVP)
@@ -631,28 +630,6 @@ func (m model) footLines() []string {
 		return []string{msg}
 	}
 	return helpLines(m.help, m.keys, m.width-4, m.footH())
-}
-
-// newFilterInput builds the focused filter textinput. The prompt string
-// already carries its colors, so the prompt style is left empty.
-func newFilterInput(prompt string) textinput.Model {
-	ti := textinput.New()
-	ti.Prompt = prompt
-	st := ti.Styles()
-	st.Focused.Prompt = lipgloss.NewStyle()
-	st.Blurred.Prompt = lipgloss.NewStyle()
-	ti.SetStyles(st)
-	ti.Focus()
-	return ti
-}
-
-// promptText builds the textinput prompt, with an orange "(dev)" marker on
-// non-release builds.
-func promptText() string {
-	if strings.HasPrefix(version, "v") {
-		return stPrompt.Render("asgotoissues ❯ ")
-	}
-	return stPrompt.Render("asgotoissues (") + stDev.Render("dev") + stPrompt.Render(") ❯ ")
 }
 
 // openInBrowser hands the URL to the OS after the TUI has exited.

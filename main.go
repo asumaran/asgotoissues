@@ -49,7 +49,7 @@ func main() {
 	}
 
 	// Alt screen and mouse mode are declared per frame by View().
-	res, err := tea.NewProgram(newModel(stacks, cache, stale, promptText())).Run()
+	res, err := tea.NewProgram(newModel(stacks, cache, stale)).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

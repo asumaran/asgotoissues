@@ -175,15 +175,20 @@ def listw(): return max(COLS - 3 - (COLS - 2) * 75 // 100, 10)   # the default s
 def divider(f): return next(l for l in f if l.startswith("├") and "┬" in l).index("┬")
 SHIFT_RIGHT, SHIFT_LEFT = b"\x1b[1;2C", b"\x1b[1;2D"
 def left(f):  return [l[1:1 + listw()].rstrip() for l in f[3:-3] if l[1:1 + listw()].strip()]
-def prompt(f): return f[1].strip("│ ").rstrip()
-def counter(f): return f[0].strip("╭╮─ ")
+# The input line: the prompt and what is typed (or the placeholder). A build
+# that is not a release says "(dev)" after the counter, on the edge over the
+# input; devmark() says so.
+def prompt(f): return f[1].strip("│ ").rstrip().removesuffix("(dev)").rstrip()
+def devmark(f): return any(l.rstrip("╮┤─ ").endswith("(dev)") for l in f[:4])
+def counter(f): return f[0].strip("╭╮─ ").removesuffix("(dev)").rstrip()
 
 print("== asgotoissues pty driver (%dx%d) ==" % (COLS, ROWS))
 
 # ---------- run 1: grouped list, preview, filter by number, open ----------
 s = session()
-f = s.start("asgotoissues (dev) ❯"); dump("open", f)
-check(prompt(f) == "asgotoissues (dev) ❯", "prompt line is clean: %r" % f[1])
+f = s.start("asgotoissues ❯"); dump("open", f)
+check(prompt(f) == "asgotoissues ❯ Search by title, key, status, repo…", "prompt line is clean: %r" % f[1])
+check(devmark(f), "a dev build says so after the counter, on the edge over the input")
 check(f[0].startswith("╭") and f[-1].startswith("╰") and "┬" in f[2],
       "one frame: input right under the top border, no title line")
 check(counter(f) == "4/4" and "type filter" in f[-2] and "esc/q quit" in f[-2], "counter %r and help %r" % (counter(f), f[-2]))
@@ -209,7 +214,7 @@ check(opened() == ["https://globex.example/browse/SHOP-602"], "enter opens the t
 
 # ---------- run 1b: a GitHub issue sits next to the Jira tickets ----------
 s = session()
-f = s.start("asgotoissues (dev) ❯")
+f = s.start("asgotoissues ❯")
 rows = left(f)
 check(any(r == "home" for r in rows) and any("tool#12" in r for r in rows), "the github stack has its group: %r" % rows)
 f = s.send(b"tool#12", 0.8); dump("github issue", f)
@@ -223,20 +228,20 @@ check(s.finish() == 0 and opened() == ["https://github.com/me/tool/issues/12"], 
 
 # ---------- run 2: q quits with an empty filter ----------
 s = session()
-s.start("asgotoissues (dev) ❯")
+s.start("asgotoissues ❯")
 os.write(s.master, b"q"); s.pump(0.4)
 check(s.finish() == 0 and opened() == [], "q quits with an empty filter and opens nothing")
 
 # ---------- run 3: esc cancels and opens nothing ----------
 s = session()
-s.start("asgotoissues (dev) ❯")
+s.start("asgotoissues ❯")
 s.send(DOWN, 0.3)
 os.write(s.master, ESC); s.pump(0.4)
 check(s.finish() == 0 and opened() == [], "esc quits and opens nothing")
 
 # ---------- run 4: the divider moves and stays where it was left ----------
 s = session()
-f = s.start("asgotoissues (dev) ❯"); at = divider(f)
+f = s.start("asgotoissues ❯"); at = divider(f)
 f = s.send(SHIFT_RIGHT, 0.6); grown = divider(f)
 check(grown > at and all(len(l) == COLS for l in f), "shift+right grows the list: %d -> %d" % (at, grown))
 f = s.send(SHIFT_LEFT, 0.6)
@@ -244,7 +249,7 @@ check(divider(f) == at, "shift+left shrinks it back: %d" % divider(f))
 s.send(SHIFT_RIGHT, 0.6)
 os.write(s.master, ESC); s.pump(0.4); s.finish()
 s = session()
-f = s.start("asgotoissues (dev) ❯")
+f = s.start("asgotoissues ❯")
 check(divider(f) == grown, "the next run opens with the same split: %d" % divider(f))
 s.send(SHIFT_LEFT, 0.6)
 os.write(s.master, ESC); s.pump(0.4); s.finish()

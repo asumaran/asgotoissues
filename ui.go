@@ -7,9 +7,6 @@ package main
 // browser AFTER the TUI exits (quitting is what closes the popup).
 
 import (
-	"os"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +57,7 @@ type keyMap struct {
 	PrevDown key.Binding
 	Shrink   key.Binding
 	Grow     key.Binding
+	Copy     key.Binding
 	Filter   key.Binding
 	Help     key.Binding
 }
@@ -78,7 +76,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Filter, k.PrevUp, k.Shrink},
 		{k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
-		{k.Select},
+		{k.Select, k.Copy},
 		{k.Help, k.Cancel},
 	}
 }
@@ -86,12 +84,13 @@ func (k keyMap) FullHelp() [][]key.Binding {
 func defaultKeys() keyMap {
 	return keyMap{
 		Nav:      defaultListNav(),
-		Select:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open in browser")),
+		Select:   key.NewBinding(key.WithKeys("enter", "ctrl+o"), key.WithHelp("enter", "open in browser")),
 		Cancel:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc/q", "quit")),
 		PrevUp:   key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑/⇧↓", "scroll the description")),
 		PrevDown: key.NewBinding(key.WithKeys("shift+down")),
 		Shrink:   key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←/⇧→", "resize the list")),
 		Grow:     key.NewBinding(key.WithKeys("shift+right")),
+		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the key")),
 		// Help-only entry: a binding without keys is disabled and the help
 		// bubble would skip it. Nothing ever matches against it.
 		Filter: key.NewBinding(key.WithKeys("type"), key.WithHelp("type", "filter")),
@@ -131,6 +130,7 @@ type model struct {
 	split   int // the preview's share of the width, percent
 	renders map[string]string
 	prevKey string
+	flash   flash // confirmation on the help line (flash.go)
 
 	// previewStyle is the glamour standard style ("dark"/"light"). It starts
 	// as "dark" and flips when the terminal answers RequestBackgroundColor.
@@ -204,6 +204,17 @@ const minBodyH = 4
 
 func (m *model) toggleHelp() tea.Cmd {
 	m.help.ShowAll = !m.help.ShowAll
+	m.resize()
+	m.renderList()
+	return m.updatePreview()
+}
+
+// reflow lays the sections out again after the help line changed height: a
+// flash folds an expanded help for as long as it shows.
+func (m *model) reflow() tea.Cmd {
+	if !m.help.ShowAll {
+		return nil
+	}
 	m.resize()
 	m.renderList()
 	return m.updatePreview()
@@ -411,6 +422,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg:
 		return m, m.setPreviewStyle(glamourStyle(msg))
 
+	case flashMsg:
+		return m, tea.Batch(m.flash.set(string(msg)), m.reflow())
+
+	case clearFlashMsg:
+		m.flash.clear(msg)
+		return m, m.reflow()
+
 	case previewMsg:
 		if msg.style != m.previewStyle { // rendered before the style flipped
 			return m, nil
@@ -466,6 +484,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, nil
+	case key.Matches(msg, m.keys.Copy):
+		if r := m.currentRow(); r != nil {
+			return m, copyCmd("asgotoissues", "", r.e.it.Key)
+		}
+		return m, copyCmd("asgotoissues", "", "")
 	case m.keys.Nav.matches(msg):
 		m.cursor = m.keys.Nav.move(msg, m.cursor, len(m.rows), m.listVP.Height(),
 			func(i int) bool { return m.rows[i].kind == "issue" })
@@ -596,7 +619,10 @@ func (m model) rightColumn() string {
 // refresh mark lives on the edge over the input.
 // footMsg is what takes the help's place while there is something to say.
 func (m model) footMsg() string {
-	if m.netErr != "" {
+	switch {
+	case m.flash.text != "":
+		return m.flash.view(m.width - 4)
+	case m.netErr != "":
 		return stError.Render(truncate(m.netErr, max(0, m.width-4)))
 	}
 	return ""
@@ -607,22 +633,4 @@ func (m model) footLines() []string {
 		return []string{msg}
 	}
 	return helpLines(m.help, m.keys, m.width-4, m.footH())
-}
-
-// openInBrowser hands the URL to the OS after the TUI has exited.
-// ASGOTOISSUES_OPENER overrides the opener (tests log the argv instead).
-func openInBrowser(url string) {
-	if url == "" {
-		return
-	}
-	var cmd *exec.Cmd
-	switch {
-	case os.Getenv("ASGOTOISSUES_OPENER") != "":
-		cmd = exec.Command(os.Getenv("ASGOTOISSUES_OPENER"), url)
-	case runtime.GOOS == "darwin":
-		cmd = exec.Command("open", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
-	}
-	_ = cmd.Run()
 }

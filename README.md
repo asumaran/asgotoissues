@@ -81,9 +81,11 @@ labels (`uat`, `sub-task`, `shop`, `bug`).
 `shift+↓`/`shift+↑` scroll the description, `?` (while the filter is empty) or
 `f1` expands the help line into every key, the mouse wheel moves the selection over
 the list and scrolls the description anywhere else, `shift+←`/`shift+→` resize the list (the split is
-remembered; the list takes a quarter of the width by default), `enter` opens the
-issue in the browser, a click selects an issue, and `esc` closes (so does
-`q` while the filter is empty).
+remembered; the list takes a quarter of the width by default), `enter` (or
+`ctrl+o`) opens the issue in the browser, `ctrl+y` copies the issue key
+(`PLAT-2099`, `tool#12`) to the clipboard and confirms it on the help line, a
+click selects an issue, and `esc` closes (so does `q` while the filter is
+empty).
 
 With a query the list is a search result: the best match comes first, with
 its group on top, and the cursor starts on it. Rows that match equally well
@@ -126,8 +128,9 @@ herdr plugin link "$PWD"   # register the working copy (no build step)
 
 Runtime state (`issuecache.json`) lives in `HERDR_PLUGIN_STATE_DIR`;
 standalone runs use the same directory (`~/.local/state/herdr/plugins/asumaran.asgotoissues/`).
-`ASGOTOISSUES_OPENER` replaces the browser opener (tests use it to capture the
-URL).
+`ASGOTOISSUES_OPENER` replaces the browser opener and `ASGOTOISSUES_CLIPBOARD`
+replaces the clipboard command (tests use them to capture the URL and the
+copied key).
 
 ## Releasing
 

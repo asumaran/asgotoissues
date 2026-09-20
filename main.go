@@ -54,7 +54,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	openInBrowser(res.(model).openURL)
+	openURL("asgotoissues", res.(model).openURL)
 }
 
 // runDump prints the state without a TUI: stacks, grouped tickets and (with

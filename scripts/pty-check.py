@@ -5,8 +5,8 @@ Spawns the binary on a pty, answers the terminal queries bubbletea sends
 (OSC 10/11, CSI 6n, DA1), replays keystrokes, and asserts on frames rendered
 with pyte. Everything runs in a throwaway sandbox: a fake HOME, a synthetic
 config (ASGOTOISSUES_CONFIG), an empty netrc, a fresh synthetic ticket cache (so
-nothing is fetched) and a logging stub instead of the browser
-(ASGOTOISSUES_OPENER). It never reads the real config and never talks to Jira
+nothing is fetched) and logging stubs instead of the browser
+(ASGOTOISSUES_OPENER) and the clipboard (ASGOTOISSUES_CLIPBOARD). It never reads the real config and never talks to Jira
 or GitHub (gh does not have to be installed).
 
 Usage: scripts/pty-check.py ./asgotoissues   (needs python3 + pyte)
@@ -156,18 +156,25 @@ write(os.path.join(home, ".local", "state", "herdr", "plugins", "asumaran.asgoto
       json.dumps({"fetched_at": now, "issues": tickets}))
 open_log = os.path.join(SANDBOX, "open.log")
 opener = write(os.path.join(SANDBOX, "opener"), '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s"\n' % open_log, 0o755)
+clip_log = os.path.join(SANDBOX, "clip.log")
+clipboard = write(os.path.join(SANDBOX, "clipboard"), '#!/bin/sh\ncat > "%s"\n' % clip_log, 0o755)
 
 def session():
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", HOME=home, NETRC=netrc,
-               ASGOTOISSUES_CONFIG=config, ASGOTOISSUES_OPENER=opener, XDG_CONFIG_HOME=os.path.join(home, ".config"))
+               ASGOTOISSUES_CONFIG=config, ASGOTOISSUES_OPENER=opener, ASGOTOISSUES_CLIPBOARD=clipboard,
+               XDG_CONFIG_HOME=os.path.join(home, ".config"))
     for k in ("HERDR_PLUGIN_STATE_DIR", "XDG_STATE_HOME", "JIRA_TOKEN_ACME", "JIRA_TOKEN_GLOBEX"):
         env.pop(k, None)
     if os.path.exists(open_log): os.remove(open_log)
+    if os.path.exists(clip_log): os.remove(clip_log)
     return Session(env)
 
 def opened():
     time.sleep(0.3)
     return open(open_log).read().splitlines() if os.path.exists(open_log) else []
+
+def copied():
+    return open(clip_log).read() if os.path.exists(clip_log) else ""
 
 # One frame (see frame.go): top border with the counter, input, main edge,
 # list | preview, bottom edge, help, border. There is no context line.
@@ -230,6 +237,17 @@ check("[open]" in body and "me/tool · bug, in progress" in body, "the preview m
 check("snake_case_name" in body and "keep the bullet" in body, "a markdown body skips the wiki conversion")
 s.send(ENTER, 0.3)
 check(s.finish() == 0 and opened() == ["https://github.com/me/tool/issues/12"], "enter opens the github issue: %r" % opened())
+
+# ---------- run 1c: ctrl+y copies the key of the issue under the cursor ----------
+s = session()
+s.start("asgotoissues ❯")
+s.send(b"602", 0.6)
+f = s.send(b"\x19", 0.6); dump("copied", f)
+check(copied() == "SHOP-602", "ctrl+y copies the issue key: %r" % copied())
+check("copied SHOP-602" in f[-2], "the help line confirms the copy: %r" % f[-2])
+check(prompt(f).endswith("602") and s.proc.poll() is None, "ctrl+y leaves the filter alone and keeps the list open: %r" % f[1])
+os.write(s.master, ESC); s.pump(0.4)
+check(s.finish() == 0 and opened() == [], "esc quits after a copy and opens nothing")
 
 # ---------- run 2: q quits with an empty filter ----------
 s = session()

@@ -198,7 +198,10 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
 - **Selection is deliberately just "open in browser"** (`open` on macOS,
   `xdg-open` elsewhere, `ASGOTOISSUES_OPENER` override), executed after quit
   because quitting closes the popup. Jumping to a checkout / creating a
-  worktree for an issue was considered and rejected for v1.
+  worktree for an issue was considered and rejected for v1. `enter` and
+  `ctrl+o` both open; `ctrl+y` copies the issue key (`it.Key`) with `copyCmd`
+  (`clipboard.go`, `ASGOTOISSUES_CLIPBOARD` override) and flashes `copied <key>`
+  on the help line (`flash.go`), ahead of any network error.
 - **Never query the terminal behind bubbletea's back**: `Init` issues
   `tea.RequestBackgroundColor()` and the `tea.BackgroundColorMsg` reply picks
   the glamour style ("dark"/"light"). Frames before the reply use "dark";
@@ -237,7 +240,7 @@ For end-to-end verification without a TTY, `scripts/pty-check.py ./asgotoissues`
 (python3 + `pyte`) spawns the binary on a pty, answers the terminal queries,
 replays keystrokes and asserts on pyte-rendered frames, in a throwaway sandbox
 (fake `HOME`, synthetic `ASGOTOISSUES_CONFIG`, empty netrc, a fresh synthetic
-ticket cache so nothing is fetched, a logging stub as `ASGOTOISSUES_OPENER`). The v2 renderer repaints with scroll regions, which pyte ignores, so the
+ticket cache so nothing is fetched, logging stubs as `ASGOTOISSUES_OPENER` and `ASGOTOISSUES_CLIPBOARD`). The v2 renderer repaints with scroll regions, which pyte ignores, so the
 driver forces a full redraw (pty resize + SIGWINCH) before reading a frame.
 
 ## Commits & branches

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -68,6 +69,56 @@ func TestEnterQueuesURLAndQuits(t *testing.T) {
 	}
 	if got := mm.(model).openURL; got != "https://b.example/browse/BETA-7" {
 		t.Errorf("openURL = %q", got)
+	}
+}
+
+// TestCtrlOOpensLikeEnter: ctrl+o is the family's "open in the browser" key,
+// so it queues the URL and quits the same way enter does.
+func TestCtrlOOpensLikeEnter(t *testing.T) {
+	m := testModel(t)
+	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatalf("ctrl+o should return tea.Quit")
+	}
+	if got := mm.(model).openURL; got != "https://a.example/browse/PLAT-100" {
+		t.Errorf("openURL = %q", got)
+	}
+	if got := mm.(model).ti.Value(); got != "" {
+		t.Errorf("ctrl+o leaked into the filter: %q", got)
+	}
+}
+
+// TestCopyKeyCopiesTheIssueKey covers ctrl+y: the key of the issue under the
+// cursor goes to the clipboard, the help line confirms it for a moment, and
+// the filter is left alone.
+func TestCopyKeyCopiesTheIssueKey(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "clip")
+	stub := filepath.Join(t.TempDir(), "clipboard")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\ncat > "+log+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ASGOTOISSUES_CLIPBOARD", stub)
+	m := testModel(t)
+	res, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+y returned no command")
+	}
+	res, _ = res.(model).Update(cmd())
+	m = res.(model)
+	if got, _ := os.ReadFile(log); string(got) != "PLAT-100" {
+		t.Errorf("the clipboard got %q, want the key of the issue under the cursor", got)
+	}
+	plain := strings.Split(ansi.Strip(m.View().Content), "\n")
+	if help := plain[len(plain)-2]; !strings.Contains(help, "copied PLAT-100") {
+		t.Errorf("help line = %q, want the confirmation", help)
+	}
+	if m.ti.Value() != "" {
+		t.Errorf("ctrl+y leaked into the filter: %q", m.ti.Value())
+	}
+	res, _ = m.Update(clearFlashMsg(m.flash.seq))
+	plain = strings.Split(ansi.Strip(res.(model).View().Content), "\n")
+	if help := plain[len(plain)-2]; !strings.Contains(help, "type filter") {
+		t.Errorf("after the timer the help is back: %q", help)
 	}
 }
 

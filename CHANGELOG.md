@@ -1,3 +1,9 @@
+## v0.9.0 (2026-09-20)
+
+* refactor(state): share one state dir with the shell (633a53d)
+* refactor(env): rename the opener to ASGOTOISSUES_OPENER (e076810)
+* feat(search): match query terms in any order (ab7eaa5)
+
 ## v0.8.0 (2026-09-19)
 
 * feat(ui): move the counter under the list (0d03017)

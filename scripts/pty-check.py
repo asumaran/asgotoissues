@@ -152,7 +152,7 @@ tickets = [
      "body_format": "markdown", "status": "open", "state": "doing", "status_cat": "", "type": "", "priority": "",
      "project": "me/tool", "meta": ["me/tool", "bug, in progress"], "created": now, "updated": now},
 ]
-write(os.path.join(home, ".config", "herdr", "asgotoissues-tui", "issuecache.json"),
+write(os.path.join(home, ".local", "state", "herdr", "plugins", "asumaran.asgotoissues", "issuecache.json"),
       json.dumps({"fetched_at": now, "issues": tickets}))
 open_log = os.path.join(SANDBOX, "open.log")
 opener = write(os.path.join(SANDBOX, "opener"), '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s"\n' % open_log, 0o755)
@@ -160,7 +160,7 @@ opener = write(os.path.join(SANDBOX, "opener"), '#!/bin/sh\nprintf "%%s\\n" "$1"
 def session():
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", HOME=home, NETRC=netrc,
                ASGOTOISSUES_CONFIG=config, ASGOTOISSUES_OPENER=opener, XDG_CONFIG_HOME=os.path.join(home, ".config"))
-    for k in ("HERDR_PLUGIN_STATE_DIR", "JIRA_TOKEN_ACME", "JIRA_TOKEN_GLOBEX"):
+    for k in ("HERDR_PLUGIN_STATE_DIR", "XDG_STATE_HOME", "JIRA_TOKEN_ACME", "JIRA_TOKEN_GLOBEX"):
         env.pop(k, None)
     if os.path.exists(open_log): os.remove(open_log)
     return Session(env)

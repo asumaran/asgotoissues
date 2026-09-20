@@ -136,7 +136,7 @@ func TestFrameGeometry(t *testing.T) {
 	}
 	plain := strings.Split(ansi.Strip(m.render()), "\n")
 	if !strings.HasPrefix(plain[0], "╭") || !strings.HasPrefix(plain[len(plain)-1], "╰") ||
-		!strings.Contains(plain[mainY(false)], "┬") || !strings.Contains(plain[0], "2/2") ||
+		!strings.Contains(plain[mainY(false)], "┬") || !strings.Contains(plain[len(plain)-3], "─ 2/2 ─┴") ||
 		!strings.HasPrefix(plain[1], "│ asgotoissues ❯ ") {
 		t.Errorf("frame sections misplaced:\n%s", strings.Join(plain, "\n"))
 	}
@@ -243,7 +243,9 @@ func TestMouseWheelFollowsThePointer(t *testing.T) {
 	}
 }
 
-func TestListPositionShowsOnlyWhileTheListOverflows(t *testing.T) {
+// The edge under the list carries the matches/total counter: group headers do
+// not count and scrolling does not change it.
+func TestCounterSitsUnderTheList(t *testing.T) {
 	bottomEdge := func(m model) string {
 		for _, l := range strings.Split(ansi.Strip(m.render()), "\n") {
 			if strings.HasPrefix(l, "├") && strings.Contains(l, "┴") {
@@ -253,8 +255,8 @@ func TestListPositionShowsOnlyWhileTheListOverflows(t *testing.T) {
 		return ""
 	}
 	m := testModel(t)
-	if edge := bottomEdge(m); strings.ContainsAny(edge, "0123456789") {
-		t.Errorf("a list that fits says nothing: %q", edge)
+	if edge := bottomEdge(m); !strings.Contains(edge, "─ 2/2 ─┴") {
+		t.Errorf("edge = %q, want 2/2 on the list's side", edge)
 	}
 	var issues []issue
 	for i := 1; i <= 30; i++ {
@@ -267,17 +269,15 @@ func TestListPositionShowsOnlyWhileTheListOverflows(t *testing.T) {
 	m = newModel([]stack{jiraStack("alpha"), jiraStack("beta")}, issueCache{FetchedAt: time.Now(), Issues: issues}, false)
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 16})
 	m = res.(model)
-	h := m.listVP.Height()
-	// the alpha header takes one of the visible lines and is not counted
-	if edge := bottomEdge(m); !strings.HasPrefix(edge, "├─ "+strconv.Itoa(h-1)+"/30 ─") {
-		t.Errorf("edge = %q, want %d/30 on the list's side", edge, h-1)
+	if edge := bottomEdge(m); !strings.Contains(edge, "─ 30/30 ─┴") {
+		t.Errorf("edge = %q, want 30/30 on the list's side", edge)
 	}
 	for i := 0; i < 40; i++ {
 		res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = res.(model)
 	}
-	if edge := bottomEdge(m); !strings.HasPrefix(edge, "├─ 30/30 ─") {
-		t.Errorf("at the bottom the edge = %q, want 30/30", edge)
+	if edge := bottomEdge(m); !strings.Contains(edge, "─ 30/30 ─┴") {
+		t.Errorf("scrolled to the bottom the edge = %q, want 30/30 still", edge)
 	}
 	if w := ansi.StringWidth(bottomEdge(m)); w != 120 {
 		t.Errorf("the edge is %d cells wide, want 120", w)

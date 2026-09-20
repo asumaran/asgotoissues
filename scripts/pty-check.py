@@ -12,7 +12,7 @@ or GitHub (gh does not have to be installed).
 Usage: scripts/pty-check.py ./asgotoissues   (needs python3 + pyte)
 """
 NAME, ROWS, COLS = "asgotoissues", 18, 150
-import atexit, fcntl, json, os, pty, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time
+import atexit, fcntl, json, os, pty, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time, re
 import pyte
 
 BIN = os.path.abspath(sys.argv[1])
@@ -176,11 +176,16 @@ def divider(f): return next(l for l in f if l.startswith("├") and "┬" in l).
 SHIFT_RIGHT, SHIFT_LEFT = b"\x1b[1;2C", b"\x1b[1;2D"
 def left(f):  return [l[1:1 + listw()].rstrip() for l in f[3:-3] if l[1:1 + listw()].strip()]
 # The input line: the prompt and what is typed (or the placeholder). A build
-# that is not a release says "(dev)" after the counter, on the edge over the
+# that is not a release says "(dev)" at the end of the edge over the
 # input; devmark() says so.
 def prompt(f): return f[1].strip("│ ").rstrip().removesuffix("(dev)").rstrip()
 def devmark(f): return any(l.rstrip("╮┤─ ").endswith("(dev)") for l in f[:4])
-def counter(f): return f[0].strip("╭╮─ ").removesuffix("(dev)").rstrip()
+def counter(f):
+    for l in f:
+        m = re.match(r"├─+ (\d+/\d+) ─[┴┤]", l)
+        if m: return m.group(1)
+    return ""
+def status(f): return f[0].strip("╭╮─ ").removesuffix("(dev)").rstrip()
 
 print("== asgotoissues pty driver (%dx%d) ==" % (COLS, ROWS))
 
@@ -188,7 +193,7 @@ print("== asgotoissues pty driver (%dx%d) ==" % (COLS, ROWS))
 s = session()
 f = s.start("asgotoissues ❯"); dump("open", f)
 check(prompt(f) == "asgotoissues ❯ Search by title, key, status, repo…", "prompt line is clean: %r" % f[1])
-check(devmark(f), "a dev build says so after the counter, on the edge over the input")
+check(devmark(f), "a dev build says so on the edge over the input")
 check(f[0].startswith("╭") and f[-1].startswith("╰") and "┬" in f[2],
       "one frame: input right under the top border, no title line")
 check(counter(f) == "4/4" and "type filter" in f[-2] and "esc/q quit" in f[-2], "counter %r and help %r" % (counter(f), f[-2]))

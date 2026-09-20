@@ -64,7 +64,8 @@ Files are split by concern but everything stays in `package main`:
   The wheel goes through the same code as the arrows; a click moves the
   cursor and never opens anything. The same file in every tool of the family.
 - `prompt.go` — the filter input: its prompt (with the tool's name only outside
-  herdr's popup), the placeholder, the `(dev)` mark after the counter. The same
+  herdr's popup), the placeholder, the `(dev)` mark on the edge over the
+  input. The same
   file in every tool of the family.
 - `helpfoot.go` — the help at the foot: the key that expands it, its height
   and its lines cut to the width. The same file in every tool of the family.
@@ -107,10 +108,9 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
 - **Layout**: one rounded frame of sections split by shared edges, the layout
   asgitlog introduced and every picker of the family follows (`frame.go`, the
   same file in each repo): the filter input (the border over it carries the
-  matches/total counter and the refresh mark), the main section (list and
-  preview split by a divider; its bottom edge carries the list's position on
-  the left and the preview's scroll position on the right, each only while its
-  side overflows), and the help. A context line on top is only for what the
+  refresh mark), the main section (list and preview split by a divider; its bottom edge carries the
+  matches/total counter under the list and, while the preview overflows, its
+  scroll position on the right), and the help. A context line on top is only for what the
   rest of the screen cannot say (asgitlog: repo and branch); a title is not
   context, so there is none here. The stacks already head their groups in the
   list. The list starts on screen row `listY`, one cell in from the left side,
@@ -127,7 +127,7 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   pane's title (`[[panes]] title` in the manifest, the tool's name) already
   says which tool it is, and a placeholder says what the filter searches. Run
   on its own the prompt carries the tool's name. A build that is not a release
-  says `(dev)` after the counter, on the edge over the input, never inside the
+  says `(dev)` on the edge over the input, never inside the
   prompt.
   herdr sets `HERDR_PLUGIN_ENTRYPOINT_ID` for a plugin pane; that is how the
   two cases are told apart.
@@ -194,7 +194,7 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   (one per tracker of a stack) refresh concurrently, one tea.Cmd each; a
   failed source keeps its cached issues and the snapshot's `FetchedAt` is NOT advanced, so the next open
   retries. Errors take the help line, never a modal; the refresh mark sits
-  next to the counter.
+  on the edge over the input.
 - **Selection is deliberately just "open in browser"** (`open` on macOS,
   `xdg-open` elsewhere, `ASGOTOISSUES_OPEN_CMD` override), executed after quit
   because quitting closes the popup. Jumping to a checkout / creating a

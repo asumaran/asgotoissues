@@ -1,22 +1,23 @@
 package main
 
 // The screen is one rounded frame of sections split by shared edges, the
-// layout asgitlog introduced: the filter input (the edge over it carries the
-// matches/total counter), the main section (list and preview, split by a
-// divider; its bottom edge carries the list's position on the left and the
-// preview's on the right, each only while its side overflows) and the help. Neighbours share an edge, so no line is spent on a border of their
-// own.
+// layout asgitlog introduced: the filter input (the edge over it carries what
+// the list is scoped to and its state), the main section (list and preview,
+// split by a divider; its bottom edge carries the matches/total counter under
+// the list, at its right end, and, while the preview overflows, its position on the right) and
+// the help. Neighbours share an edge, so no line is spent on a border of
+// their own.
 //
 // A context line on top is optional and only for what the rest of the screen
 // cannot say (asgitlog: which repository and branch; asgotonotes: which group
-// is being browsed). A title is not context. Without it the counter sits on
+// is being browsed). A title is not context. Without it the status sits on
 // the frame's top border:
 //
-//	╭─────────────────────── 3/12 ─╮  0          ╭──────────────────────────────╮
+//	╭────────────────── [vs main] ─╮  0          ╭──────────────────────────────╮
 //	│ filter ❯                     │  1          │ context                      │
-//	├───────────┬──────────────────┤  mainY      ├─────────────────────── 3/12 ─┤
+//	├───────────┬──────────────────┤  mainY      ├────────────────── [vs main] ─┤
 //	│ list      │ preview          │  listY …    │ filter ❯                     │
-//	├───────────┴─────────── 8/40 ─┤             ├───────────┬──────────────────┤
+//	├──── 3/12 ─┴─────────── 8/40 ─┤             ├───────────┬──────────────────┤
 //	│ help                         │             │ list      │ preview          │
 //	╰──────────────────────────────╯             …
 
@@ -49,15 +50,15 @@ func frameRows(context bool) int {
 }
 
 // frameHead is everything above the main section: the top border, the
-// optional context line, the counter on the edge over the input, the input.
-func frameHead(w int, context, counter, input string) []string {
+// optional context line, the status on the edge over the input, the input.
+func frameHead(w int, context, status, input string) []string {
 	if context == "" {
-		return []string{hline(w, "╭", "╮", "", counter), framed(w, input)}
+		return []string{hline(w, "╭", "╮", "", status), framed(w, input)}
 	}
 	return []string{
 		hline(w, "╭", "╮", "", ""),
 		framed(w, context),
-		hline(w, "├", "┤", "", counter),
+		hline(w, "├", "┤", "", status),
 		framed(w, input),
 	}
 }
@@ -111,34 +112,12 @@ func scrollPos(vp *viewport.Model) string {
 	return stDim.Render(strconv.Itoa(min(total, vp.YOffset()+vp.Height())) + "/" + strconv.Itoa(total))
 }
 
-// listPos is the list's position for the same edge: the last visible item
-// out of the listed ones, empty while everything fits. isItem tells the item
-// lines from the rest (group headers), which do not count, so the total
-// agrees with the counter over the input; nil means every line is an item.
-func listPos(vp *viewport.Model, isItem func(line int) bool) string {
-	lines := vp.TotalLineCount()
-	if lines <= vp.Height() {
-		return ""
-	}
-	seen, total := 0, 0
-	for i := 0; i < lines; i++ {
-		if isItem != nil && !isItem(i) {
-			continue
-		}
-		total++
-		if i < vp.YOffset()+vp.Height() {
-			seen++
-		}
-	}
-	return stDim.Render(strconv.Itoa(seen) + "/" + strconv.Itoa(total))
-}
-
 // splitMain is the main section with a list of listW cells and a preview of
 // prevW cells (padding included) side by side: the top edge, one line per
-// list row, and the bottom edge carrying listPos under the list and pos under
-// the preview. list must hold lines of exactly listW cells; preview lines are
+// list row, and the bottom edge carrying the counter under the list and pos
+// under the preview. list must hold lines of exactly listW cells; preview lines are
 // padded here.
-func splitMain(list, preview []string, listW, prevW int, listPos, pos string) []string {
+func splitMain(list, preview []string, listW, prevW int, counter, pos string) []string {
 	side := stDim.Render("│")
 	out := make([]string, 0, len(list)+2)
 	out = append(out, stDim.Render("├"+strings.Repeat("─", listW))+hline(prevW+2, "┬", "┤", "", ""))
@@ -149,5 +128,5 @@ func splitMain(list, preview []string, listW, prevW int, listPos, pos string) []
 		}
 		out = append(out, side+list[i]+side+fit(" "+d, prevW)+side)
 	}
-	return append(out, hline(listW+1, "├", "", listPos, "")+hline(prevW+2, "┴", "┤", "", pos))
+	return append(out, hline(listW+1, "├", "", "", counter)+hline(prevW+2, "┴", "┤", "", pos))
 }

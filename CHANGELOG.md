@@ -1,3 +1,7 @@
+## v0.8.0 (2026-09-19)
+
+* feat(ui): move the counter under the list (0d03017)
+
 ## v0.7.2 (2026-09-19)
 
 * refactor: move firstLine to the shared text.go (c382b24)

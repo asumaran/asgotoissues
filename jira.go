@@ -191,14 +191,6 @@ func postJSON(ctx context.Context, endpoint string, cred credential, body map[st
 	return &parsed, nil
 }
 
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	return s
-}
-
 // parseJiraTime accepts Jira's "2026-08-17T11:40:18.035-0400" (no colon in
 // the zone offset) as well as plain RFC 3339.
 func parseJiraTime(s string) (time.Time, error) {

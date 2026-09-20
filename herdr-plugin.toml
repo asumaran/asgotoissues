@@ -1,6 +1,6 @@
 id = "asumaran.asgotoissues"
 name = "asgotoissues"
-version = "0.10.0"
+version = "0.11.0"
 min_herdr_version = "0.7.5"
 description = "Jump to your open issues (Jira, GitHub) across every configured stack"
 platforms = ["linux", "macos"]

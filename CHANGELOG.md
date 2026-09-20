@@ -1,3 +1,7 @@
+## v0.10.0 (2026-09-20)
+
+* feat(keys): copy the key with ctrl+y, open with ^o (a50ab7a)
+
 ## v0.9.0 (2026-09-20)
 
 * refactor(state): share one state dir with the shell (633a53d)

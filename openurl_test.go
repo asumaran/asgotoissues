@@ -14,13 +14,21 @@ func TestOpenURLUsesTheToolsOpener(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("ASTOOL_OPENER", stub)
-	openURL("astool", "https://example.com/x?a=1")
+	if err := openURL("astool", "https://example.com/x?a=1"); err != nil {
+		t.Fatal(err)
+	}
 	if got, _ := os.ReadFile(log); strings.TrimSpace(string(got)) != "https://example.com/x?a=1" {
 		t.Errorf("the opener got %q", got)
 	}
 	_ = os.Remove(log)
-	openURL("astool", "")
+	if err := openURL("astool", ""); err != nil {
+		t.Errorf("an empty URL is not an error: %v", err)
+	}
 	if _, err := os.Stat(log); err == nil {
 		t.Errorf("an empty URL must open nothing")
+	}
+	t.Setenv("ASTOOL_OPENER", filepath.Join(t.TempDir(), "missing"))
+	if err := openURL("astool", "https://example.com"); err == nil {
+		t.Errorf("an opener that cannot run must report it")
 	}
 }

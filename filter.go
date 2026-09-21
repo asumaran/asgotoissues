@@ -56,7 +56,7 @@ type hit struct {
 func findHits(q string, summaries, keys, metas []string) map[int]hit {
 	hits := map[int]hit{}
 	for i, h := range findFields(q, summaries, keys, metas) {
-		hits[i] = hit{score: h.Score, idx: h.Idx[0], key: h.Field == 1}
+		hits[i] = hit{score: h.Score, idx: h.Any[0], key: h.Field == 1}
 	}
 	return hits
 }

@@ -34,8 +34,6 @@ func renderPreviewCmd(it issue, width int, style string) tea.Cmd {
 			content = md // raw text beats nothing
 		case content == "":
 			content = stDim.Render("(no description)")
-		default:
-			content = "\n" + content // a blank line under the header
 		}
 		return previewMsg{key: key, style: style, content: content}
 	}

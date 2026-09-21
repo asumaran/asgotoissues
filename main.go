@@ -26,8 +26,12 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the embedded version")
 	dump := flag.Bool("dump", false, "print configured stacks and issues (no TUI)")
-	query := flag.String("query", "", "with -dump: print filter scores for this query")
+	query := flag.String("query", "", "with -dump: print the matches and their scores instead of the list")
 	show := flag.String("show", "", "with -dump: print this issue's description as Markdown")
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "usage: asgotoissues [flags]")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	if *showVersion {
@@ -50,10 +54,15 @@ func main() {
 	// Alt screen and mouse mode are declared per frame by View().
 	res, err := tea.NewProgram(newModel(stacks, cache, stale)).Run()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "asgotoissues:", err)
 		os.Exit(1)
 	}
-	openURL("asgotoissues", res.(model).openURL)
+	if url := res.(model).openURL; url != "" {
+		if err := openURL("asgotoissues", url); err != nil {
+			fmt.Fprintf(os.Stderr, "asgotoissues: open %s: %v\n", url, err)
+			os.Exit(1)
+		}
+	}
 }
 
 // runDump prints the state without a TUI: stacks, grouped tickets and (with
@@ -86,6 +95,18 @@ func runDump(stacks []stack, cache issueCache, stale bool, query, show string) {
 	}
 
 	entries := buildEntries(cache.Issues)
+	if query != "" {
+		q := strings.ToLower(query)
+		summaries, keys, metas := corpora(entries)
+		fmt.Printf("query %q:\n", query)
+		for _, r := range buildRows(entries, q, summaries, keys, metas) {
+			if r.kind != "issue" {
+				continue
+			}
+			fmt.Printf("  %5d  %s %s\n", r.score, r.e.it.Key, truncate(r.e.it.Summary, 60))
+		}
+		return
+	}
 	last := ""
 	for _, e := range entries {
 		if e.it.Stack != last {
@@ -105,18 +126,6 @@ func runDump(stacks []stack, cache issueCache, stale bool, query, show string) {
 			if strings.EqualFold(it.Key, show) {
 				fmt.Printf("---- %s (as markdown) ----\n%s\n", it.Key, it.markdown())
 			}
-		}
-	}
-
-	if query != "" {
-		q := strings.ToLower(query)
-		summaries, keys, metas := corpora(entries)
-		fmt.Printf("query %q:\n", query)
-		for _, r := range buildRows(entries, q, summaries, keys, metas) {
-			if r.kind != "issue" {
-				continue
-			}
-			fmt.Printf("  %5d  %s %s\n", r.score, r.e.it.Key, truncate(r.e.it.Summary, 60))
 		}
 	}
 }

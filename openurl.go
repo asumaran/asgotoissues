@@ -5,33 +5,29 @@ package main
 // This file is the same in every tool of the family that opens one.
 
 import (
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 )
 
-// openURL hands url to the browser. <TOOL>_OPENER, the variable every tool of
-// the family reads for what opens its selection, replaces the browser (the
-// tests log the argv instead). On macOS a Chrome that is already up gets a new
-// tab in its front window, so the page lands in the window being looked at,
-// not in whichever one the system picks.
-func openURL(tool, url string) {
+// openURL hands url to the browser and reports whether that worked.
+// <TOOL>_OPENER (opener.go) replaces the browser. On macOS a Chrome that is
+// already up gets a new tab in its front window, so the page lands in the
+// window being looked at, not in whichever one the system picks.
+func openURL(tool, url string) error {
 	if url == "" {
-		return
+		return nil
 	}
-	if b := os.Getenv(strings.ToUpper(tool) + "_OPENER"); b != "" {
-		_ = exec.Command(b, url).Run()
-		return
+	if argv := openerArgv(tool); len(argv) > 0 {
+		return exec.Command(argv[0], append(argv[1:], url)...).Run()
 	}
 	if runtime.GOOS != "darwin" {
-		_ = exec.Command("xdg-open", url).Run()
-		return
+		return exec.Command("xdg-open", url).Run()
 	}
 	if openInChromeFrontWindow(url) == nil {
-		return
+		return nil
 	}
-	_ = exec.Command("open", url).Run()
+	return exec.Command("open", url).Run()
 }
 
 func openInChromeFrontWindow(url string) error {

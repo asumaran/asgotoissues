@@ -468,7 +468,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.openURL = r.e.it.URL
 			return m, tea.Quit
 		}
-		return m, nil
+		return m, m.flash.set("nothing to open")
 	case key.Matches(msg, m.keys.Copy):
 		if r := m.currentRow(); r != nil {
 			return m, copyCmd("asgotoissues", "", r.e.it.Key)

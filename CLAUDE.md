@@ -26,7 +26,8 @@ spelling is rejected by `go get`).
 Files are split by concern but everything stays in `package main`:
 
 - `main.go`: flags (`-version`, `-dump`, `-query`, `-show`), model
-  construction, `tea.NewProgram`, post-quit browser open, `runDump`.
+  construction, `tea.NewProgram`, post-quit browser open, `runDump` (it writes
+  to an `io.Writer`, so the tests read what `-dump` prints).
 - `config.go`: front-matter extraction from `asdev.local.md`, stack parsing
   (config order preserved via a `yaml.Node` walk), which trackers a stack
   lists (`issues:`), netrc + env credentials for Jira.
@@ -37,11 +38,13 @@ Files are split by concern but everything stays in `package main`:
   `/rest/api/2/search/jql` with `nextPageToken`, server `/rest/api/2/search`
   with `startAt`), issue mapping.
 - `github.go`: the GitHub provider: issue searches through `gh api graphql`
-  (`ghRun` is the seam tests replace), issue mapping, state from labels.
+  (`ghRun`, in `ghrun.go`, is the seam tests replace), issue mapping, state
+  from labels.
 - `wiki.go`: Jira wiki markup → Markdown (headings, lists, code/noformat/
   quote blocks, tables, links, mono/bold/italic, mentions).
-- `cache.go`: `issuecache.json` load/save, 60s freshness debounce, and
-  `stateDir()`, a wrapper over `stateDirFor` (`statedir.go`).
+- `cache.go`: `issuecache.json` load/save (through `jsonfile.go`), 60s
+  freshness debounce, and `stateDir()`, a wrapper over `stateDirFor`
+  (`statedir.go`).
 - `filter.go`: entries, corpora, fuzzy hits, `matchBonus` ranking, row
   building, header-skipping navigation.
 - `match.go`: `findTight`/`tighten`, the fuzzy matcher with one correction: it
@@ -52,7 +55,8 @@ Files are split by concern but everything stays in `package main`:
   a bare `~` or `'` do not, so they never filter, rank or move the cursor. The
   same file in every tool of the family.
 - `text.go`: `truncate`, `padRight`, `padLeft`: fitting text, styled or not,
-  into cells. The same file in every tool of the family.
+  into cells. `errorBlock` is an error for a preview: every line of it cut to
+  the width, in the error color. The same file in every tool of the family.
 - `statedir.go`: `stateDirFor`: the state dir herdr injects
   (`HERDR_PLUGIN_STATE_DIR`) or, when the tool runs on its own, the same
   directory worked out
@@ -63,8 +67,13 @@ Files are split by concern but everything stays in `package main`:
   `relTime` (`3h ago`) for a sentence. The same file in every tool of the
   family that shows an age.
 - `markdown.go`: `renderMarkdown` (glamour with a fixed style, never
-  auto-detected), `glamourStyle` and `setPreviewStyle`. The same file in every
-  tool of the family that renders Markdown.
+  auto-detected), `glamourStyle` and `setPreviewStyle`, plus the preview's
+  side of a render: `previewMsg` (a finished render and the style it used),
+  `showRender` (points the preview at a render and reports whether it has to
+  be started), `clearPreview`, and `handlePreview` (keeps a finished render,
+  shows it when it is still the one awaited, and drops one rendered before the
+  style flipped). The same file in every tool of the family that renders
+  Markdown.
 - `listmouse.go`: `inList`, `rowUnder`, `wheelKey`: the mouse over the list.
   The wheel goes through the same code as the arrows; a click moves the
   cursor and never opens anything. The same file in every tool of the family.
@@ -90,11 +99,14 @@ Files are split by concern but everything stays in `package main`:
 - `highlight.go`: `highlight`/`highlightFrom`, `matchOver`, `onSel`,
   `selPad` and the `stSel`/`stMatch` styles: how a match and the selected row
   look. The same file in every tool of the family.
-- `flash.go`: `flash`, `flashMsg`, `clearFlashMsg`: a confirmation that takes
-  the help line for a moment. The same file in every tool of the family.
+- `flash.go`: `flash`, `flashMsg`, `flashErrMsg`, `clearFlashMsg`: a word that
+  takes the help line for a moment: a confirmation in green (`flash.set`), or
+  a key that could do nothing (`nothing to copy`) in the error color
+  (`flash.fail`). The same file in every tool of the family.
 - `clipboard.go`: `copyCmd`: feeds a text to the system clipboard and reports
-  it with a `flashMsg`; `ASGOTOISSUES_CLIPBOARD` replaces the command. The
-  same file in every tool of the family.
+  it with a `flashMsg`, or with a `flashErrMsg` when there is nothing to copy
+  or the copy fails; `ASGOTOISSUES_CLIPBOARD` replaces the command. The same
+  file in every tool of the family.
 - `border.go`: `hline`, `framed`, `fit`, `scrollPos`: the primitives the frame
   is drawn with (an edge with texts set into it, a line between the frame's
   sides, the position a scrolled viewport reports on an edge). `fitLines` is
@@ -116,8 +128,22 @@ Files are split by concern but everything stays in `package main`:
   every tool of the family that ranks its matches.
 - `openurl.go`: `openURL`: hands a URL to the browser. On macOS a Chrome that
   is already up gets a new tab in its front window, else `open`; `xdg-open`
-  elsewhere; `ASGOTOISSUES_OPENER` replaces all of it. The same file in every
-  tool of the family that opens one.
+  elsewhere; `ASGOTOISSUES_OPENER` (`opener.go`) replaces all of it. The same
+  file in every tool of the family that opens one.
+- `opener.go`: `openerArgv`: the command `<TOOL>_OPENER` names, as words, or
+  nothing when the variable is unset and the tool's own default applies. The
+  value is a command line, not a path: `code -n` and a wrapper with flags both
+  work, a path with spaces does not. The same file in every tool of the family
+  that opens something.
+- `ghrun.go`: `ghRun`: running the GitHub CLI. A failure is said the way gh
+  said it (the first line of its stderr), and a missing gh reads `gh not found
+  (install the GitHub CLI)`. The tests replace it. The same file in every tool
+  of the family that runs gh.
+- `jsonfile.go`: `readJSONFile`, `writeJSONFile`, `writeFileAtomic`: a JSON
+  cache in the state dir. A file that is missing or does not parse reads as
+  nothing, and a write goes through a temporary file and a rename, so a popup
+  closed mid-write, or two of them writing at once, never leave half a file
+  for the next run. The same file in every tool of the family that keeps one.
 - `frame.go`: the single-frame layout the pickers share: `frameHead`,
   `splitMain` (list and preview) and the section rows (`mainY`, `listY`,
   `frameRows`, each with or without the optional context line), drawn with the
@@ -195,7 +221,9 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   closes it before it does anything else. `?` is not a help key: the filter
   has the focus, so it is text. Moving, scrolling and resizing are listed in
   the panel only, so the help line stays short enough for a narrow popup. A
-  message (error, notice) takes the help line's place.
+  message takes the help line's place (`footLine`): a flash for a moment (a
+  confirmation in green, a key that could do nothing in the error color),
+  else an error or a notice in the error color.
   This tool has no options, so the panel lists the keys alone and the help
   line says `f1 help`.
 - **Filter matches** look the same in every tool of the family and come from
@@ -274,7 +302,9 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `ctrl+o` both open.
 - **Copy**: `ctrl+y` copies the issue key (`it.Key`) with `copyCmd` (the
   shared `clipboard.go`) and the help line flashes `copied <key>`
-  (`flash.go`), ahead of any network error. `ASGOTOISSUES_CLIPBOARD` replaces
+  (`flash.go`), ahead of any network error. A key that could do nothing
+  (`nothing to copy`, `copy failed: ...`, `nothing to open`) flashes in the
+  error color instead of green (`flash.fail`, `flashErrMsg`). `ASGOTOISSUES_CLIPBOARD` replaces
   the clipboard command (the tests point it at a stub).
 - **Never query the terminal behind bubbletea's back**: `Init` issues
   `tea.RequestBackgroundColor()` and the `tea.BackgroundColorMsg` reply picks
@@ -290,7 +320,10 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
 - Ordering: stacks in config order; issues within a stack by `created`
   desc (`newerIssue`), falling back to key number, then `updated`.
 - Search corpus: summary + key/number + status/type/project/stack/parent
-  and the provider's meta parts (repo, labels); exact key +30, exact number
+  and the provider's meta parts (repo, labels), kept as shown and matched
+  against the query as typed (the matcher folds case itself, and its offsets
+  are bytes into the string the row highlights; the bonuses compare whole
+  words whatever their case); exact key +30, exact number
   +20 (the part after the last `-` or `#`), key prefix with `-` or `#` +10, exact
   stack/project +10, key hit +2.
 - **A query makes the list a search result**: tickets are ranked, best match

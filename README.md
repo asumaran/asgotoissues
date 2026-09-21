@@ -76,15 +76,20 @@ The filter input is focused on open, so just type. A query of several words matc
 summary, the key (`2099` finds `PLAT-2099`, so does `plat-2099`; `12` finds
 `tool#12`), and the status, type, project or repo, stack, parent key and
 labels (`uat`, `sub-task`, `shop`, `bug`).
-`↑/↓` (or `ctrl+p`/`ctrl+n`) move between issues, PgDn/PgUp move a page,
-`alt+↑`/`alt+↓` (or Home/End) go to the top or the bottom of the list,
-`shift+↓`/`shift+↑` scroll the description, `f1` opens a panel with every key (`esc` closes it), the mouse wheel moves the selection over
-the list and scrolls the description anywhere else, `shift+←`/`shift+→` resize the list (the split is
-remembered; the list takes a quarter of the width by default), `enter` (or
-`ctrl+o`) opens the issue in the browser, `ctrl+y` copies the issue key
-(`PLAT-2099`, `tool#12`) to the clipboard and confirms it on the help line, a
-click selects an issue, and `esc` closes (so does `q` while the filter is
-empty).
+
+| key | action |
+| --- | --- |
+| `enter`, `ctrl+o` | open the issue in the browser |
+| `ctrl+y` | copy the issue key (`PLAT-2099`, `tool#12`) to the clipboard; the help line confirms it |
+| `↑/↓`, `ctrl+p`/`ctrl+n` | move the cursor |
+| PgDn/PgUp | move the cursor a page |
+| `alt+↑`/`alt+↓`, Home/End | top or bottom of the list |
+| `shift+↓`/`shift+↑`, mouse wheel over the preview | scroll the description |
+| mouse wheel over the list | move the cursor |
+| `f1` | open the panel with every key (`esc` closes it) |
+| `shift+←`/`shift+→` | resize the list; the split is remembered (the list takes a quarter of the width by default) |
+| click | select a row (`enter` still opens it) |
+| `esc`, `q` with an empty filter | close |
 
 With a query the list is a search result: the best match comes first, with
 its group on top, and the cursor starts on it. Rows that match equally well

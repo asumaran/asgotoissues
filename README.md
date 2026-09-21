@@ -130,7 +130,7 @@ list stays as it is and the cursor does not move.
 ```bash
 go build -o asgotoissues .          # local build (plugin runs ./asgotoissues from the repo root)
 ./asgotoissues -dump                # print stacks and issues (no TTY; refreshes when stale)
-./asgotoissues -dump -query cart    # additionally print filter scores for a query
+./asgotoissues -dump -query cart    # the matches and their scores instead of the list
 ./asgotoissues -dump -show PLAT-2099 # print an issue's description as Markdown
 ./asgotoissues -version             # print the embedded version
 go vet ./... && go test ./...
@@ -143,7 +143,8 @@ Runtime state (`issuecache.json`, the divider's `split-columns`) lives in
 (`~/.local/state/herdr/plugins/asumaran.asgotoissues/`).
 
 `ASGOTOISSUES_CONFIG` points at another configuration file.
-`ASGOTOISSUES_OPENER` replaces the browser opener and `ASGOTOISSUES_CLIPBOARD`
+`ASGOTOISSUES_OPENER` replaces the browser opener (a command line; the URL is
+appended) and `ASGOTOISSUES_CLIPBOARD`
 replaces the clipboard command (`pbcopy` on macOS, else `wl-copy`, `xclip` or
 `xsel`); the tests use them to capture the URL and the copied key.
 `ASGOTOISSUES_POPUP_WIDTH` / `ASGOTOISSUES_POPUP_HEIGHT` override the popup

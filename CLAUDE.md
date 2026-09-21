@@ -134,14 +134,15 @@ Files are split by concern but everything stays in `package main`:
 - `ui.go`: the bubbletea model/Update/View, styles. The browser is opened
   from `main.go` after the TUI quits (`openURL`, `openurl.go`).
 - `preview.go`: glamour rendering as a `tea.Cmd`, per-(URL,width,updated)
-  render cache, instant non-glamour header.
+  render cache, instant non-glamour header (`rightColumn` puts one blank line
+  under it).
 
 ## Build & run
 
 ```bash
 go build -o asgotoissues .    # plugin runs ./asgotoissues from the repo root
 ./asgotoissues -dump          # stacks + issues, no TTY (refreshes when stale)
-./asgotoissues -dump -query x # additionally prints filter scores
+./asgotoissues -dump -query x # the matches and their scores instead of the list
 ./asgotoissues -dump -show KEY # prints the wiki → Markdown conversion of KEY
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 + pyte)

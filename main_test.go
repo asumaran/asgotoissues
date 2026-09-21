@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	tea "charm.land/bubbletea/v2"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -355,5 +358,94 @@ func TestFilteringRanksRowsAndTheirStacks(t *testing.T) {
 	}
 	if strings.Join(got, " ") != "WORK-9 WORK-3 HOME-1" {
 		t.Errorf("unfiltered rows = %v", got)
+	}
+}
+
+// dumpInputs is what main hands runDump, built from testEntries: the stacks
+// and the cache. The config and the state dir are temporary, so the header
+// names no real file and nothing is read from the real ones.
+func dumpInputs(t *testing.T) ([]stack, issueCache) {
+	t.Helper()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("ASGOTOISSUES_CONFIG", filepath.Join(t.TempDir(), "asdev.local.md"))
+	cache := issueCache{FetchedAt: time.Now()}
+	for _, e := range testEntries() {
+		cache.Issues = append(cache.Issues, e.it)
+	}
+	return []stack{jiraStack("dh"), jiraStack("mo")}, cache
+}
+
+// TestRunDump covers -dump on a fresh cache (no refresh, so no network): the
+// config and the counts on top, a line per tracker, and every ticket once
+// under its stack.
+func TestRunDump(t *testing.T) {
+	stacks, cache := dumpInputs(t)
+	var out bytes.Buffer
+	runDump(&out, stacks, cache, false, "", "")
+	got := out.String()
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	// 3 summary lines, 2 trackers, 2 stack headers, 3 tickets.
+	if len(lines) != 10 {
+		t.Fatalf("got %d lines, want 10:\n%s", len(lines), got)
+	}
+	if lines[0] != "config: "+configPath() {
+		t.Errorf("first line %q, want the config path", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "cache: 3 issues, fetched ") || lines[2] != "stacks: 2" {
+		t.Errorf("summary %q, want the cache and the stacks", lines[1:3])
+	}
+	if lines[5] != "dh" || lines[8] != "mo" {
+		t.Errorf("stack headers %q and %q, want dh and mo", lines[5], lines[8])
+	}
+	for _, e := range testEntries() {
+		if n := strings.Count(got, e.it.Key+" "); n != 1 {
+			t.Errorf("%s is listed %d times, want once:\n%s", e.it.Key, n, got)
+		}
+	}
+	if want := "  PLAT-2099    [UAT] Task: Audit: enforce authz (updated "; !strings.HasPrefix(lines[6], want) {
+		t.Errorf("ticket row %q, want it to start with %q", lines[6], want)
+	}
+}
+
+// TestRunDumpQuery covers -dump -query: the matches with their scores, best
+// first, instead of the grouped list.
+func TestRunDumpQuery(t *testing.T) {
+	stacks, cache := dumpInputs(t)
+	var out bytes.Buffer
+	runDump(&out, stacks, cache, false, "boundary audit", "")
+	got := out.String()
+	_, matches, ok := strings.Cut(got, "query \"boundary audit\":\n")
+	if !ok {
+		t.Fatalf("no query line:\n%s", got)
+	}
+	if want := "PLAT-2098 Audit trail at the service boundary"; strings.Count(matches, "\n") != 1 || !strings.HasSuffix(matches, "  "+want+"\n") {
+		t.Errorf("matches %q, want only %q", matches, want)
+	}
+
+	out.Reset()
+	runDump(&out, stacks, cache, false, "audit", "")
+	got = out.String()
+	_, matches, _ = strings.Cut(got, "query \"audit\":\n")
+	lines := strings.Split(strings.TrimRight(matches, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d matches, want the 2 audit tickets:\n%s", len(lines), got)
+	}
+	last := 0
+	for i, l := range lines {
+		score, rest, _ := strings.Cut(strings.TrimSpace(l), "  ")
+		n, err := strconv.Atoi(score)
+		if err != nil || !strings.HasPrefix(rest, "PLAT-20") {
+			t.Errorf("match %d is %q, want a score and a PLAT ticket", i, l)
+		}
+		if i > 0 && n > last {
+			t.Errorf("score %d after %d, want the best first:\n%s", n, last, got)
+		}
+		last = n
+	}
+	// The matches replace the list: no other ticket, no stack header, no row.
+	for _, not := range []string{"SHOP-602", "\ndh\n", "[UAT]", "(updated "} {
+		if strings.Contains(got, not) {
+			t.Errorf("the query dump has %q, a piece of the full listing:\n%s", not, got)
+		}
 	}
 }

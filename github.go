@@ -8,9 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -35,22 +33,6 @@ const ghIssuesQuery = `query($q: String!, $after: String) {
     }
   }
 }`
-
-// ghRun runs gh and returns its stdout. Tests replace it.
-var ghRun = func(ctx context.Context, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, "gh", args...).Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return nil, fmt.Errorf("gh: %s", firstLine(string(ee.Stderr)))
-		}
-		if errors.Is(err, exec.ErrNotFound) {
-			return nil, errors.New("gh not found (GitHub issues need the gh CLI)")
-		}
-		return nil, fmt.Errorf("gh: %w", err)
-	}
-	return out, nil
-}
 
 type ghIssueNode struct {
 	Number     int       `json:"number"`

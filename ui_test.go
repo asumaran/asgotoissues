@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -122,6 +123,109 @@ func TestCopyKeyCopiesTheIssueKey(t *testing.T) {
 	}
 }
 
+// TestNothingUnderTheCursor: with the list filtered down to nothing, ctrl+y
+// says there is nothing to copy without running the clipboard command, and
+// enter and ctrl+o say there is nothing to open instead of closing the popup.
+func TestNothingUnderTheCursor(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "clip")
+	stub := filepath.Join(t.TempDir(), "clipboard")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\ncat > "+log+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ASGOTOISSUES_CLIPBOARD", stub)
+	m := testModel(t)
+	for _, r := range "zzzzqq" {
+		res, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = res.(model)
+	}
+	if m.currentRow() != nil {
+		t.Fatalf("the query should leave nothing under the cursor, got %d rows", len(m.rows))
+	}
+	res, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+y returned no command")
+	}
+	res, _ = res.(model).Update(cmd())
+	if got := res.(model).flash.text; got != "nothing to copy" {
+		t.Errorf("ctrl+y with an empty list flashed %q", got)
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Errorf("the clipboard command ran with nothing to copy")
+	}
+	plain := strings.Split(ansi.Strip(res.(model).render()), "\n")
+	if help := plain[len(plain)-2]; !strings.Contains(help, "nothing to copy") {
+		t.Errorf("help line = %q, want the flash", help)
+	}
+
+	for name, k := range map[string]tea.KeyPressMsg{"enter": {Code: tea.KeyEnter}, "ctrl+o": {Code: 'o', Mod: tea.ModCtrl}} {
+		res, cmd = m.Update(k)
+		got := res.(model)
+		if got.flash.text != "nothing to open" || got.openURL != "" {
+			t.Errorf("%s with an empty list: flash %q, openURL %q", name, got.flash.text, got.openURL)
+		}
+		if quitsNow(cmd) {
+			t.Errorf("%s with an empty list closed the popup", name)
+		}
+		if got.ti.Value() != "zzzzqq" {
+			t.Errorf("%s leaked into the filter: %q", name, got.ti.Value())
+		}
+	}
+}
+
+// quitsNow reports whether cmd is tea.Quit. The flash's timer is a command
+// too, and one that blocks for as long as the flash lasts, so the command runs
+// aside and only an answer that comes at once counts.
+func quitsNow(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msg := <-done:
+		_, ok := msg.(tea.QuitMsg)
+		return ok
+	case <-time.After(100 * time.Millisecond):
+		return false
+	}
+}
+
+// TestBackgroundColorFlipsPreviewStyle: a light background switches the
+// glamour style, drops the renders made with the old palette and renders the
+// current preview again; a dark one is the default and changes nothing.
+func TestBackgroundColorFlipsPreviewStyle(t *testing.T) {
+	m := testModel(t)
+	m.renders["stale"] = "old palette"
+	res, cmd := m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#ffffff")})
+	got := res.(model)
+	if got.previewStyle != "light" {
+		t.Errorf("light background: style = %q", got.previewStyle)
+	}
+	if _, ok := got.renders["stale"]; ok {
+		t.Errorf("style change kept the old render cache")
+	}
+	if cmd == nil {
+		t.Errorf("style change did not re-render the current preview")
+	}
+	// A render produced under the old style is dropped.
+	res, _ = got.Update(previewMsg{key: got.prevKey, style: "dark", content: "dark render"})
+	if c := res.(model).renders[got.prevKey]; c != "" {
+		t.Errorf("stale-style render was cached: %q", c)
+	}
+	// The same answer again is a no-op.
+	res, cmd = got.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#ffffff")})
+	if cmd != nil || res.(model).previewStyle != "light" {
+		t.Errorf("repeated background reply was not a no-op")
+	}
+	// A dark background keeps the default: nothing is dropped or rendered again.
+	m = testModel(t)
+	m.renders["kept"] = "dark render"
+	res, cmd = m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#000000")})
+	if got := res.(model); got.previewStyle != "dark" || got.renders["kept"] == "" || cmd != nil {
+		t.Errorf("dark background: style = %q, renders = %v, cmd = %v", got.previewStyle, got.renders, cmd)
+	}
+}
+
 func TestEscQuitsWithoutURL(t *testing.T) {
 	m := testModel(t)
 	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -173,26 +277,44 @@ func TestMain(m *testing.M) {
 }
 
 // TestFrameGeometry pins the single-frame layout: exactly height lines, each
-// exactly width cells, sections where the click math expects them.
+// exactly width cells, sections where the click math expects them. The narrow
+// and short sizes are the ones a popup really gets; the help line is cut
+// there, so its text is checked where it fits. The last size is the floor:
+// the body keeps one line (bodyH) and the columns their minimum (splitWidths),
+// so under 25x7 the frame is larger than the screen by design and nothing is
+// promised. The open panel is laid over the same frame.
 func TestFrameGeometry(t *testing.T) {
-	m := testModel(t)
-	lines := strings.Split(m.render(), "\n")
-	if len(lines) != m.height {
-		t.Errorf("%d lines, want %d", len(lines), m.height)
-	}
-	for i, l := range lines {
-		if w := ansi.StringWidth(l); w != m.width {
-			t.Errorf("line %d is %d cells, want %d: %q", i, w, m.width, ansi.Strip(l))
+	for _, size := range [][2]int{{120, 30}, {94, 24}, {150, 16}, {61, 12}, {40, 10}, {25, 7}} {
+		next, _ := testModel(t).Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m := next.(model)
+		for _, panel := range []bool{false, true} {
+			m.panel.open = panel
+			lines := strings.Split(m.render(), "\n")
+			if len(lines) != size[1] {
+				t.Errorf("%v panel=%v: %d lines, want %d", size, panel, len(lines), size[1])
+			}
+			for i, l := range lines {
+				if w := ansi.StringWidth(l); w != size[0] {
+					t.Errorf("%v panel=%v: line %d is %d cells, want %d: %q", size, panel, i, w, size[0], ansi.Strip(l))
+				}
+			}
 		}
-	}
-	plain := strings.Split(ansi.Strip(m.render()), "\n")
-	if !strings.HasPrefix(plain[0], "╭") || !strings.HasPrefix(plain[len(plain)-1], "╰") ||
-		!strings.Contains(plain[mainY(false)], "┬") || !strings.Contains(plain[len(plain)-3], "─ 2/2 ─┴") ||
-		!strings.HasPrefix(plain[1], "│ asgotoissues ❯ ") {
-		t.Errorf("frame sections misplaced:\n%s", strings.Join(plain, "\n"))
-	}
-	if help := plain[len(plain)-2]; !strings.Contains(help, "type filter") || !strings.Contains(help, "esc/q quit") {
-		t.Errorf("help line = %q", help)
+		m.panel.open = false
+		plain := strings.Split(ansi.Strip(m.render()), "\n")
+		if !strings.HasPrefix(plain[0], "╭") || !strings.HasPrefix(plain[len(plain)-1], "╰") ||
+			!strings.Contains(plain[mainY(false)], "┬") || !strings.Contains(plain[len(plain)-3], "─ 2/2 ─┴") ||
+			!strings.HasPrefix(plain[1], "│ asgotoissues ❯ ") {
+			t.Errorf("%v: frame sections misplaced:\n%s", size, strings.Join(plain, "\n"))
+		}
+		// The list starts at listY: the stack's name and the selected issue
+		// under it, or the issue alone when the body is a single line.
+		if top := plain[listY(false)]; !strings.HasPrefix(top, "│alpha") && !strings.HasPrefix(top, "│▌ PLAT-10") {
+			t.Errorf("%v: the list does not start at listY: %q", size, top)
+		}
+		help := plain[len(plain)-2]
+		if !strings.Contains(help, "type filter") || size[0] >= 94 && !strings.Contains(help, "esc/q quit") {
+			t.Errorf("%v: help line = %q", size, help)
+		}
 	}
 }
 

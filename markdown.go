@@ -57,3 +57,46 @@ func (m *model) setPreviewStyle(style string) tea.Cmd {
 	m.prevKey = ""
 	return m.updatePreview()
 }
+
+// previewMsg is a finished render. style is the glamour style it used: a
+// render that was under way when the style flipped is dropped.
+type previewMsg struct {
+	key     string
+	style   string
+	content string
+}
+
+// showRender points the preview at the render named key, from the top. It
+// reports whether the caller has to start that render: not when the preview
+// shows it already, nor when it is in the cache.
+func (m *model) showRender(key string) bool {
+	if key == m.prevKey {
+		return false
+	}
+	m.prevKey = key
+	m.prevVP.GotoTop()
+	if c, ok := m.renders[key]; ok {
+		m.prevVP.SetContent(c)
+		return false
+	}
+	m.prevVP.SetContent(stDim.Render("rendering…"))
+	return true
+}
+
+// clearPreview empties the preview: nothing is selected.
+func (m *model) clearPreview() {
+	m.prevKey = ""
+	m.prevVP.SetContent("")
+}
+
+// handlePreview keeps a finished render and shows it when it is still the one
+// the preview is waiting for.
+func (m *model) handlePreview(msg previewMsg) {
+	if msg.style != m.previewStyle { // rendered before the style flipped
+		return
+	}
+	m.renders[msg.key] = msg.content
+	if msg.key == m.prevKey {
+		m.prevVP.SetContent(msg.content)
+	}
+}

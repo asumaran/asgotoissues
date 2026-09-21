@@ -12,6 +12,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ func main() {
 	stale := time.Since(cache.FetchedAt) >= cacheFresh
 
 	if *dump {
-		runDump(stacks, cache, stale, *query, *show)
+		runDump(os.Stdout, stacks, cache, stale, *query, *show)
 		return
 	}
 
@@ -68,7 +69,7 @@ func main() {
 // runDump prints the state without a TUI: stacks, grouped tickets and (with
 // -query) filter scores. It refreshes synchronously when the cache is stale,
 // so it exercises the same fetch path the TUI uses in the background.
-func runDump(stacks []stack, cache issueCache, stale bool, query, show string) {
+func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, show string) {
 	if stale {
 		merged, errs := refreshSynchronously(stacks, cache.Issues)
 		for _, e := range errs {
@@ -81,50 +82,50 @@ func runDump(stacks []stack, cache issueCache, stale bool, query, show string) {
 		cache = issueCache{FetchedAt: fetchedAt, Issues: merged}
 		saveCache(cache)
 	}
-	fmt.Printf("config: %s\n", configPath())
-	fmt.Printf("cache: %d issues, fetched %s (%s)\n", len(cache.Issues), relTime(cache.FetchedAt), cacheFile())
-	fmt.Printf("stacks: %d\n", len(stacks))
+	fmt.Fprintf(w, "config: %s\n", configPath())
+	fmt.Fprintf(w, "cache: %d issues, fetched %s (%s)\n", len(cache.Issues), relTime(cache.FetchedAt), cacheFile())
+	fmt.Fprintf(w, "stacks: %d\n", len(stacks))
 	for _, s := range stacks {
 		for _, kind := range s.Trackers {
 			where := s.BaseURL + " (" + s.Type + ")"
 			if kind == kindGitHub {
 				where = strings.Join(s.Orgs, ", ")
 			}
-			fmt.Printf("  %-16s %-6s %s\n", s.Name, kind, where)
+			fmt.Fprintf(w, "  %-16s %-6s %s\n", s.Name, kind, where)
 		}
 	}
 
 	entries := buildEntries(cache.Issues)
 	if query != "" {
-		q := strings.ToLower(query)
+		q := query
 		summaries, keys, metas := corpora(entries)
-		fmt.Printf("query %q:\n", query)
+		fmt.Fprintf(w, "query %q:\n", query)
 		for _, r := range buildRows(entries, q, summaries, keys, metas) {
 			if r.kind != "issue" {
 				continue
 			}
-			fmt.Printf("  %5d  %s %s\n", r.score, r.e.it.Key, truncate(r.e.it.Summary, 60))
+			fmt.Fprintf(w, "  %5d  %s %s\n", r.score, r.e.it.Key, truncate(r.e.it.Summary, 60))
 		}
 		return
 	}
 	last := ""
 	for _, e := range entries {
 		if e.it.Stack != last {
-			fmt.Printf("%s\n", e.it.Stack)
+			fmt.Fprintf(w, "%s\n", e.it.Stack)
 			last = e.it.Stack
 		}
 		label := e.it.Type
 		if label == "" {
 			label = e.it.sourceKind()
 		}
-		fmt.Printf("  %-12s [%s] %s: %s (updated %s, desc %dB)\n",
+		fmt.Fprintf(w, "  %-12s [%s] %s: %s (updated %s, desc %dB)\n",
 			e.it.Key, e.it.Status, label, truncate(e.it.Summary, 60), relTime(e.it.Updated), len(e.it.Description))
 	}
 
 	if show != "" {
 		for _, it := range cache.Issues {
 			if strings.EqualFold(it.Key, show) {
-				fmt.Printf("---- %s (as markdown) ----\n%s\n", it.Key, it.markdown())
+				fmt.Fprintf(w, "---- %s (as markdown) ----\n%s\n", it.Key, it.markdown())
 			}
 		}
 	}

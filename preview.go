@@ -14,12 +14,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-type previewMsg struct {
-	key     string
-	style   string // glamour style the render used; dropped if it changed since
-	content string
-}
-
 func previewKey(it issue, width int) string {
 	return it.URL + "|" + strconv.Itoa(width) + "|" + strconv.FormatInt(it.Updated.Unix(), 10)
 }

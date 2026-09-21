@@ -35,12 +35,14 @@ func buildEntries(issues []issue) []*entry {
 	return out
 }
 
-// corpora returns the three parallel lowercased search texts for entries.
+// corpora returns the three parallel search texts for entries, as they are
+// shown: the matcher folds case itself, scores a camelCase boundary, and its
+// offsets are bytes into the very string the row highlights.
 func corpora(entries []*entry) (summaries, keys, metas []string) {
 	for _, e := range entries {
-		summaries = append(summaries, strings.ToLower(e.it.Summary))
-		keys = append(keys, strings.ToLower(e.it.Key)+" "+e.it.number())
-		meta := strings.ToLower(strings.Join([]string{e.it.Status, e.it.Type, e.it.Project, e.it.Stack, e.it.ParentKey, strings.Join(e.it.Meta, " ")}, " "))
+		summaries = append(summaries, e.it.Summary)
+		keys = append(keys, e.it.Key+" "+e.it.number())
+		meta := strings.Join([]string{e.it.Status, e.it.Type, e.it.Project, e.it.Stack, e.it.ParentKey, strings.Join(e.it.Meta, " ")}, " ")
 		metas = append(metas, meta)
 	}
 	return summaries, keys, metas
@@ -66,6 +68,7 @@ func findHits(q string, summaries, keys, metas []string) map[int]hit {
 // exact stack/project names bubble their group up.
 func matchBonus(e *entry, h hit, q string) int {
 	bonus := 0
+	q = strings.ToLower(strings.TrimSpace(q)) // the bonuses compare whole words, whatever their case
 	lk := strings.ToLower(e.it.Key)
 	switch {
 	case q == lk:

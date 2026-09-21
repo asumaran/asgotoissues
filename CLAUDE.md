@@ -25,73 +25,115 @@ for the config. The charm v2 modules are imported under their canonical
 spelling is rejected by `go get`).
 Files are split by concern but everything stays in `package main`:
 
-- `main.go` — flags (`-version`, `-dump`, `-query`, `-show`), model
+- `main.go`: flags (`-version`, `-dump`, `-query`, `-show`), model
   construction, `tea.NewProgram`, post-quit browser open, `runDump`.
-- `config.go` — front-matter extraction from `asdev.local.md`, stack parsing
+- `config.go`: front-matter extraction from `asdev.local.md`, stack parsing
   (config order preserved via a `yaml.Node` walk), which trackers a stack
   lists (`issues:`), netrc + env credentials for Jira.
-- `provider.go` — the tracker-neutral side: the `issue` struct, the
+- `provider.go`: the tracker-neutral side: the `issue` struct, the
   `provider` interface (`kind`, `fetch`), `sourcesOf` (one source per tracker
   of a stack), `mergeStacks` (fresh-or-cached per source), tea.Cmd plumbing.
-- `jira.go` — the Jira provider: per-stack search (cloud
+- `jira.go`: the Jira provider: per-stack search (cloud
   `/rest/api/2/search/jql` with `nextPageToken`, server `/rest/api/2/search`
   with `startAt`), issue mapping.
-- `github.go` — the GitHub provider: issue searches through `gh api graphql`
+- `github.go`: the GitHub provider: issue searches through `gh api graphql`
   (`ghRun` is the seam tests replace), issue mapping, state from labels.
-- `wiki.go` — Jira wiki markup → Markdown (headings, lists, code/noformat/
+- `wiki.go`: Jira wiki markup → Markdown (headings, lists, code/noformat/
   quote blocks, tables, links, mono/bold/italic, mentions).
-- `cache.go` — state dir resolution, `issuecache.json` load/save, 60s
-  freshness debounce.
-- `filter.go` — entries, corpora, fuzzy hits, `matchBonus` ranking, row
+- `cache.go`: `issuecache.json` load/save, 60s freshness debounce, and
+  `stateDir()`, a wrapper over `stateDirFor` (`statedir.go`).
+- `filter.go`: entries, corpora, fuzzy hits, `matchBonus` ranking, row
   building, header-skipping navigation.
-- `match.go` — `findTight`, the fuzzy matcher with one correction: it is
-  greedy (first candidate for each rune, left to right), so a query that
+- `match.go`: `findTight`/`tighten`, the fuzzy matcher with one correction: it
+  is greedy (first candidate for each rune, left to right), so a query that
   occurs in one piece could still match scattered letters before it. When the
   query occurs whole, that occurrence is the match, for the highlight and for
-  the score. The same file in every tool of the family.
-- `text.go` — `truncate`, `padRight`, `padLeft`: fitting text, styled or not,
+  the score. `hasTerms` says whether a query searches for anything: spaces and
+  a bare `~` or `'` do not, so they never filter, rank or move the cursor. The
+  same file in every tool of the family.
+- `text.go`: `truncate`, `padRight`, `padLeft`: fitting text, styled or not,
   into cells. The same file in every tool of the family.
-- `statedir.go` — `stateDirFor`: the state dir herdr injects, or a fixed path
-  under the config home when the tool runs on its own. The same file in every
-  tool of the family that keeps state.
-- `age.go` — `compactAge` (`5m`, `3h`, `2d`, `6w`, `2y`) for a list column and
+- `statedir.go`: `stateDirFor`: the state dir herdr injects
+  (`HERDR_PLUGIN_STATE_DIR`) or, when the tool runs on its own, the same
+  directory worked out
+  (`${XDG_STATE_HOME:-~/.local/state}/herdr/plugins/asumaran.asgotoissues`),
+  so the popup and a run from the shell share settings and caches. The same
+  file in every tool of the family.
+- `age.go`: `compactAge` (`5m`, `3h`, `2d`, `6w`, `2y`) for a list column and
   `relTime` (`3h ago`) for a sentence. The same file in every tool of the
   family that shows an age.
-- `markdown.go` — `renderMarkdown` (glamour with a fixed style, never
+- `markdown.go`: `renderMarkdown` (glamour with a fixed style, never
   auto-detected), `glamourStyle` and `setPreviewStyle`. The same file in every
   tool of the family that renders Markdown.
-- `listmouse.go` — `inList`, `rowUnder`, `wheelKey`: the mouse over the list.
+- `listmouse.go`: `inList`, `rowUnder`, `wheelKey`: the mouse over the list.
   The wheel goes through the same code as the arrows; a click moves the
   cursor and never opens anything. The same file in every tool of the family.
-- `prompt.go` — the filter input: its prompt (with the tool's name only outside
+- `prompt.go`: the filter input: its prompt (with the tool's name only outside
   herdr's popup), the placeholder, the `(dev)` mark on the edge over the
-  input. The same
-  file in every tool of the family.
-- `helpfoot.go` — the help line at the foot, cut to the width, and the key
-  that opens the panel. The same file in every tool of the family.
-- `panel.go` — the panel `f1` opens over the frame: options to change in
+  input. `typeInto` hands a message to the input and reports whether the query
+  changed: a key, a terminal paste and the input's own `ctrl+v` all edit it,
+  and the caller filters again only when it did. The same file in every tool
+  of the family.
+- `helpfoot.go`: the help line at the foot, cut to the width, and the key that
+  opens the panel. `footLine` is what the foot shows: a flash first, then a
+  notice in the error color, else the help. The same file in every tool of the
+  family.
+- `panel.go`: the panel `f1` opens over the frame: options to change in
   place and every key under them (`option`, `panel`, `panelLines`,
   `overlay`). The same file in every tool of the family.
-- `listnav.go` — `listNav`: the keys that move the cursor through a list and
-  where each one takes it, group headers skipped. `scrollTo` keeps the
-  cursor in view, with the header of its group when there is one. `emptyList`
-  is what a list says instead of rows: the error, `No matches`, or the
-  tool's own reason. The same file in every tool
-  of the family.
-- `highlight.go` — `highlight`/`highlightFrom`, `matchOver`, `onSel`,
+- `listnav.go`: `listNav`: the keys that move the cursor through a list and
+  where each one takes it, group headers skipped. `scrollTo` keeps the cursor
+  in view together with the row `withHeader` names: the header of its group
+  when that is the row right above. `emptyList` is what a list says instead of
+  rows: the error that kept it from loading, in the error color, `No matches`,
+  or the tool's own reason. The same file in every tool of the family.
+- `highlight.go`: `highlight`/`highlightFrom`, `matchOver`, `onSel`,
   `selPad` and the `stSel`/`stMatch` styles: how a match and the selected row
   look. The same file in every tool of the family.
-- `frame.go` — the single-frame layout shared by the family: `hline`, `fit`,
-  `framed`, `frameHead`, `splitMain`, `scrollPos` and the section rows (`mainY`,
-  `listY`, `frameRows`, each with or without the optional context line).
-- `split.go` — the divider between the list and the preview: `loadSplit`,
-  `saveSplit`, `stepSplit`, `splitWidths`. The file is copied, not imported:
-  the same one ships in asgotochanged, asgotosession, asgotonotes and asgotopr (all
-  under github.com/asumaran), and there is no shared library. A pull request
-  only needs to change it here; the maintainer ports the change to the other
+- `flash.go`: `flash`, `flashMsg`, `clearFlashMsg`: a confirmation that takes
+  the help line for a moment. The same file in every tool of the family.
+- `clipboard.go`: `copyCmd`: feeds a text to the system clipboard and reports
+  it with a `flashMsg`; `ASGOTOISSUES_CLIPBOARD` replaces the command. The
+  same file in every tool of the family.
+- `border.go`: `hline`, `framed`, `fit`, `scrollPos`: the primitives the frame
+  is drawn with (an edge with texts set into it, a line between the frame's
+  sides, the position a scrolled viewport reports on an edge). `fitLines` is
+  content as exactly so many lines of a width, and `popupView` is the
+  `tea.View` every tool returns: the alt screen and, while the mouse is on,
+  cell-motion mouse reports. The same file in every tool of the family.
+- `fatal.go`: `fatal(tool, msg)`: an error that keeps the tool from starting.
+  In herdr's popup the message is held until enter, because the pane closes
+  with the process and takes stderr with it; in a shell it is plain stderr and
+  exit 1. The same file in every tool of the family that needs it.
+- `refreshmark.go`: `refreshMark`: what the edge over the input says about a
+  list that is fetched in the background and shown from a cache meanwhile:
+  `refreshing…` while the fetch runs and, after one that failed, a standing
+  `refresh failed` in the error color. The same file in every tool of the
+  family that needs it.
+- `rank.go`: `rank`: with a query the list is a search result, best score
+  first; in a grouped list the groups go by their best item and keep their
+  items together, and equal scores keep the list's own order. The same file in
+  every tool of the family that ranks its matches.
+- `openurl.go`: `openURL`: hands a URL to the browser. On macOS a Chrome that
+  is already up gets a new tab in its front window, else `open`; `xdg-open`
+  elsewhere; `ASGOTOISSUES_OPENER` replaces all of it. The same file in every
+  tool of the family that opens one.
+- `frame.go`: the single-frame layout the pickers share: `frameHead`,
+  `splitMain` (list and preview) and the section rows (`mainY`, `listY`,
+  `frameRows`, each with or without the optional context line), drawn with the
+  primitives of `border.go`. Copied, not imported: the same file ships in
+  asgoto, asgotopr, asgotonotes, asgotosession and asgotochanged (all under
+  github.com/asumaran), and there is no shared library. A pull request only
+  needs to change it here; the maintainer ports the change to the other
   copies.
-- `ui.go` — the bubbletea model/Update/View, styles, `openInBrowser`.
-- `preview.go` — glamour rendering as a `tea.Cmd`, per-(URL,width,updated)
+- `split.go`: the divider between the list and the preview: `loadSplit`,
+  `saveSplit`, `stepSplit`, `splitWidths`, `moveSplit` (one step, remembered)
+  and `sizePanes` (the list and the preview get their share of the main
+  section). Copied, not imported, like `frame.go`: the same file ships in
+  asgotopr, asgotonotes, asgotosession and asgotochanged.
+- `ui.go`: the bubbletea model/Update/View, styles. The browser is opened
+  from `main.go` after the TUI quits (`openURL`, `openurl.go`).
+- `preview.go`: glamour rendering as a `tea.Cmd`, per-(URL,width,updated)
   render cache, instant non-glamour header.
 
 ## Build & run
@@ -137,6 +179,12 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   prompt.
   herdr sets `HERDR_PLUGIN_ENTRYPOINT_ID` for a plugin pane; that is how the
   two cases are told apart.
+  Whatever reaches the input goes through `toInput`: a key, a paste from the
+  terminal (`tea.PasteMsg`) and the input's own `ctrl+v` filter the list the
+  same way (`typeInto`), and a message that leaves the query alone (a caret
+  move, the blink) never moves the cursor. A paste under the open panel is
+  dropped. A query made only of spaces, or a bare `~` or `'`, is not a query
+  (`hasTerms`): it does not filter, rank or move the cursor.
 - **Help and options**: the line at the foot shows the tool's own actions,
   the panel's key and the quit keys (`helpfoot.go`). `f1` opens the panel (`panel.go`, the same file in
   every tool of the family): the options on top, to change with `←`/`→` or
@@ -162,8 +210,6 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   30-85 and saved as `split-columns` in the state dir; the default is 75
   (list 25%, preview 75%), the same in every picker of the family. Rows
   must degrade for a narrow list instead of truncating their last columns.
-  `↑/↓` are left out of the help line so `esc/q quit` still fits next to
-  `resize`.
 - **Mouse**: the wheel follows the pointer, as in asgitlog: over the list
   (`overList`) it moves the selection through the same code as the arrow keys,
   anywhere else it scrolls the description. A left click on an issue row moves
@@ -205,9 +251,24 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   failed source keeps its cached issues and the snapshot's `FetchedAt` is NOT advanced, so the next open
   retries. Errors take the help line, never a modal; the refresh mark sits
   on the edge over the input.
-- **Selection is deliberately just "open in browser"** (`open` on macOS,
-  `xdg-open` elsewhere, `ASGOTOISSUES_OPENER` override), executed after quit
-  because quitting closes the popup. Jumping to a checkout / creating a
+- **A failed refresh** keeps the cached list on screen. The error (`netErr`,
+  the failed sources joined) takes the help line through the shared
+  `footLine`, in the error color, until the next key gives the help back; the
+  edge over the input keeps a red `refresh failed` mark (`refreshMark`,
+  `m.stale`) for as long as the list is the cached one, so the state outlives
+  the message. An error that keeps a list from loading at all is shown in the
+  list in the error color in every tool of the family (`emptyList`); here a
+  fetch error never empties the list, so it has no such case. A config that
+  cannot be read keeps the tool from starting and goes through the shared
+  `fatal` (`fatal.go`): held until enter in the popup, stderr and exit 1 in a
+  shell.
+- **Selection is deliberately just "open in browser"**, executed after quit
+  because quitting closes the popup. `openURL` (`openurl.go`, the same file
+  in every tool that opens the browser) prefers an AppleScript `make new tab`
+  in Chrome's front window when Chrome is running with a window, because
+  `open <url>` lets Chrome pick its `profile.last_used`, which is not the
+  last focused window. It falls back to `open` (`xdg-open` off macOS);
+  `ASGOTOISSUES_OPENER` replaces the whole thing. Jumping to a checkout / creating a
   worktree for an issue was considered and rejected for v1. `enter` and
   `ctrl+o` both open.
 - **Copy**: `ctrl+y` copies the issue key (`it.Key`) with `copyCmd` (the
@@ -244,10 +305,7 @@ Unit tests cover the pure logic (config parsing, netrc, time parsing,
 merge fallback per source, the GitHub provider against a fake `ghRun`,
 issues cached by older versions, wiki conversion, ranking, grouping, key handling, partial
 refresh failure, View content). `TestMain` points `HERDR_PLUGIN_STATE_DIR`
-at a temp dir so tests never touch the real cache. For end-to-end TUI
-verification without a TTY, drive the binary in a pty (answer OSC 10/11 +
-CSI 6n + DA1 queries, replay keystrokes, set `ASGOTOISSUES_OPENER` to a script
-that logs argv) — see asgoto's `scripts/demo/driver.py`.
+at a temp dir so tests never touch the real cache.
 
 For end-to-end verification without a TTY, `scripts/pty-check.py ./asgotoissues`
 (python3 + `pyte`) spawns the binary on a pty, answers the terminal queries,
@@ -258,14 +316,16 @@ driver forces a full redraw (pty resize + SIGWINCH) before reading a frame.
 
 ## Commits & branches
 
-- Conventional Commits: `type(scope): description`.
-- Never mention AI tooling in commits, PRs, or any repo-visible text.
+- Conventional Commits: `type(scope): description` (feat, fix, chore, docs,
+  style, refactor, test, perf).
+- Never mention AI tooling in commits, PRs, or any repo-visible text as the
+  author of changes.
 - Default branch is `main`. Don't commit, tag, or push unless explicitly
   asked (releasing is an explicit, separate request).
 
 ## Releasing
 
-`scripts/release.sh <X.Y.Z>` — clean-tree + vet/build/test gate, CHANGELOG
+`scripts/release.sh <X.Y.Z>`: clean-tree + vet/build/test gate, CHANGELOG
 generation from commit subjects, manifest version sync, commit + tag + GitHub
 release; CI (`.github/workflows/release.yml`) attaches the `asgotoissues-<os>-<arch>` binaries (macOS and Linux, arm64 and amd64).
 Releasing never touches the linked plugin's `./asgotoissues`; rebuild locally to

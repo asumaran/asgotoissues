@@ -89,11 +89,15 @@ labels (`uat`, `sub-task`, `shop`, `bug`).
 | `f1` | open the panel with every key (`esc` closes it) |
 | `shift+←`/`shift+→` | resize the list; the split is remembered (the list takes a quarter of the width by default) |
 | click | select a row (`enter` still opens it) |
-| `esc`, `q` with an empty filter | close |
+| `esc`, `ctrl+c`, `q` with an empty filter | quit |
 
 With a query the list is a search result: the best match comes first, with
 its group on top, and the cursor starts on it. Rows that match equally well
 stay in their usual order, most recently updated first.
+
+Pasting into the filter (a terminal paste or `ctrl+v`) filters like typing
+does. A query of spaces only, or a bare `~` or `'`, is not a query yet: the
+list stays as it is and the cursor does not move.
 
 ## Behavior notes
 
@@ -111,8 +115,11 @@ stay in their usual order, most recently updated first.
   popup renders instantly from the last snapshot while the trackers refresh
   concurrently in the background (skipped entirely when the snapshot is
   under 60s old). If a tracker fails (offline, expired token, `gh` logged
-  out) its cached issues stay listed, the error takes the help line, and the
-  snapshot is revalidated again on the next open.
+  out) its cached issues stay listed, the error takes the help line until the
+  next key, the edge over the filter keeps a red `refresh failed` mark, and
+  the snapshot is revalidated again on the next open.
+- A configuration file that cannot be read keeps the popup from starting: the
+  message stays on screen until `enter` (from a shell it is a plain error).
 - Keys are colored by state: green while in progress, dim for to-do, red when
   blocked. In Jira that comes from the status category, and from a status
   name that contains "block". In GitHub it comes from the labels: one that
@@ -125,16 +132,22 @@ go build -o asgotoissues .          # local build (plugin runs ./asgotoissues fr
 ./asgotoissues -dump                # print stacks and issues (no TTY; refreshes when stale)
 ./asgotoissues -dump -query cart    # additionally print filter scores for a query
 ./asgotoissues -dump -show PLAT-2099 # print an issue's description as Markdown
+./asgotoissues -version             # print the embedded version
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 + pyte)
 herdr plugin link "$PWD"   # register the working copy (no build step)
 ```
 
-Runtime state (`issuecache.json`) lives in `HERDR_PLUGIN_STATE_DIR`;
-standalone runs use the same directory (`~/.local/state/herdr/plugins/asumaran.asgotoissues/`).
+Runtime state (`issuecache.json`, the divider's `split-columns`) lives in
+`HERDR_PLUGIN_STATE_DIR`; standalone runs use the same directory
+(`~/.local/state/herdr/plugins/asumaran.asgotoissues/`).
+
+`ASGOTOISSUES_CONFIG` points at another configuration file.
 `ASGOTOISSUES_OPENER` replaces the browser opener and `ASGOTOISSUES_CLIPBOARD`
-replaces the clipboard command (tests use them to capture the URL and the
-copied key).
+replaces the clipboard command (`pbcopy` on macOS, else `wl-copy`, `xclip` or
+`xsel`); the tests use them to capture the URL and the copied key.
+`ASGOTOISSUES_POPUP_WIDTH` / `ASGOTOISSUES_POPUP_HEIGHT` override the popup
+size from the manifest.
 
 ## Releasing
 

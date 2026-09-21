@@ -1,3 +1,14 @@
+## v0.12.0 (2026-09-21)
+
+* docs: describe the new shared files and flashes (a0093da)
+* refactor: share the gh runner and preview tail (e350ce6)
+* docs: describe the opener, -dump and the header (3f6c0b8)
+* fix(ui): one blank line under the preview header (088835c)
+* docs: match the docs to the shared helpers (0c12ad6)
+* fix(ui): show startup errors, mark a bad refresh (4937f46)
+* test(pty): cover the wheel, give Copy its bullet (3b37729)
+* fix(list): say why the list is empty, in the list (47d5bca)
+
 ## v0.11.1 (2026-09-20)
 
 * docs(readme): list the keys in a table (878c512)

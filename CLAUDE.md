@@ -73,7 +73,8 @@ Files are split by concern but everything stays in `package main`:
   place and every key under them (`option`, `panel`, `panelLines`,
   `overlay`). The same file in every tool of the family.
 - `listnav.go` — `listNav`: the keys that move the cursor through a list and
-  where each one takes it, group headers skipped. The same file in every tool
+  where each one takes it, group headers skipped. `scrollTo` keeps the
+  cursor in view, with the header of its group when there is one. The same file in every tool
   of the family.
 - `highlight.go` — `highlight`/`highlightFrom`, `matchOver`, `onSel`,
   `selPad` and the `stSel`/`stMatch` styles: how a match and the selected row

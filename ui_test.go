@@ -416,3 +416,30 @@ func TestPanel(t *testing.T) {
 		t.Errorf("f1 opens the panel whatever the filter says")
 	}
 }
+
+// TestScrollingUpRevealsTheGroupHeader: coming up onto the first issue of a
+// stack shows the stack's name too, as asgotopr does with a repo (scrollTo in
+// listnav.go).
+func TestScrollingUpRevealsTheGroupHeader(t *testing.T) {
+	m := testModel(t)
+	first := -1 // the first issue of the last stack
+	for i, r := range m.rows {
+		if r.kind == "header" {
+			first = i + 1
+		}
+	}
+	// A list short enough to scroll down to that issue.
+	for h := 12; h > 6 && m.listVP.Height() > len(m.rows)-first; h-- {
+		res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: h})
+		m = res.(model)
+	}
+	m.listVP.SetYOffset(first)
+	if m.listVP.YOffset() != first {
+		t.Fatalf("could not scroll to row %d: %d rows in %d lines", first, len(m.rows), m.listVP.Height())
+	}
+	m.cursor = first
+	m.ensureVisible()
+	if got := m.listVP.YOffset(); got != first-1 {
+		t.Errorf("offset = %d, want %d: the header above row %d should show", got, first-1, first)
+	}
+}

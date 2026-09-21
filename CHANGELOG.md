@@ -1,3 +1,8 @@
+## v0.11.1 (2026-09-20)
+
+* docs(readme): list the keys in a table (878c512)
+* fix(list): show the stack's header when scrolling up (1cf54b4)
+
 ## v0.11.0 (2026-09-20)
 
 * feat(ui): open an options and keys panel with f1 (98982ae)

@@ -570,8 +570,21 @@ func (m model) status() string {
 }
 
 // listLines is the list as exactly bodyH lines of listW cells.
+// leftColumn is the list, or the reason there is nothing to list. A fetch
+// error is on the help line already.
+func (m model) leftColumn() string {
+	if len(m.rows) > 0 {
+		return m.listVP.View()
+	}
+	reason := "No open issues"
+	if len(m.entries) == 0 && m.refreshing {
+		reason = "Loading issues from " + strconv.Itoa(len(m.sources)) + " source(s)…"
+	}
+	return emptyList("", m.ti.Value(), reason, m.listW())
+}
+
 func (m model) listLines() []string {
-	lines := strings.Split(m.listVP.View(), "\n")
+	lines := strings.Split(m.leftColumn(), "\n")
 	for len(lines) < m.bodyH() {
 		lines = append(lines, "")
 	}
@@ -586,13 +599,7 @@ func (m model) rightColumn() string {
 	w := m.prevW()
 	r := m.currentRow()
 	if r == nil {
-		if len(m.entries) == 0 && m.refreshing {
-			return "\n" + stDim.Render("Loading issues from "+strconv.Itoa(len(m.sources))+" source(s)…")
-		}
-		if len(m.entries) == 0 {
-			return "\n" + stDim.Render("No open issues")
-		}
-		return ""
+		return "" // the list says why it is empty (leftColumn)
 	}
 	return previewHeader(r.e.it, w) + "\n\n" + m.prevVP.View()
 }

@@ -226,6 +226,10 @@ f = s.send(b"\x1b[<0;5;6M\x1b[<0;5;6m", 0.5)
 rows = left(f)
 check(any(r.startswith("▌") and "PLAT-2098" in r for r in rows) and s.proc.poll() is None,
       "a click selects the ticket without opening it: %r" % rows)
+f = s.send(b"\x1b[<64;5;6M", 0.5)   # the wheel, up, over the list
+rows = left(f)
+check(any(r.startswith("▌") and "PLAT-2099" in r for r in rows) and s.proc.poll() is None,
+      "the wheel over the list moves the cursor: %r" % rows)
 f = s.send(b"602", 0.6); dump("filtered", f)
 rows = left(f)
 check(any("SHOP-602" in r for r in rows) and not any("PLAT-" in r for r in rows), "a ticket number filters: %r" % rows)

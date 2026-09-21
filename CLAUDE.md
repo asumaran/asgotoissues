@@ -74,7 +74,9 @@ Files are split by concern but everything stays in `package main`:
   `overlay`). The same file in every tool of the family.
 - `listnav.go` — `listNav`: the keys that move the cursor through a list and
   where each one takes it, group headers skipped. `scrollTo` keeps the
-  cursor in view, with the header of its group when there is one. The same file in every tool
+  cursor in view, with the header of its group when there is one. `emptyList`
+  is what a list says instead of rows: the error, `No matches`, or the
+  tool's own reason. The same file in every tool
   of the family.
 - `highlight.go` — `highlight`/`highlightFrom`, `matchOver`, `onSel`,
   `selPad` and the `stSel`/`stMatch` styles: how a match and the selected row
@@ -207,9 +209,11 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `xdg-open` elsewhere, `ASGOTOISSUES_OPENER` override), executed after quit
   because quitting closes the popup. Jumping to a checkout / creating a
   worktree for an issue was considered and rejected for v1. `enter` and
-  `ctrl+o` both open; `ctrl+y` copies the issue key (`it.Key`) with `copyCmd`
-  (`clipboard.go`, `ASGOTOISSUES_CLIPBOARD` override) and flashes `copied <key>`
-  on the help line (`flash.go`), ahead of any network error.
+  `ctrl+o` both open.
+- **Copy**: `ctrl+y` copies the issue key (`it.Key`) with `copyCmd` (the
+  shared `clipboard.go`) and the help line flashes `copied <key>`
+  (`flash.go`), ahead of any network error. `ASGOTOISSUES_CLIPBOARD` replaces
+  the clipboard command (the tests point it at a stub).
 - **Never query the terminal behind bubbletea's back**: `Init` issues
   `tea.RequestBackgroundColor()` and the `tea.BackgroundColorMsg` reply picks
   the glamour style ("dark"/"light"). Frames before the reply use "dark";
@@ -217,9 +221,10 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   re-renders. Don't call glamour's `WithAutoStyle` or lipgloss's
   `HasDarkBackground` from inside the program: the reply races bubbletea's
   input reader and ends up typed into the filter as literal "rgb:..." text.
-- **View**: `View()` returns a `tea.View` built from `render()`, which holds
-  the frame text and is what the tests assert on. The alt screen is declared
-  per frame there; there is no `tea.WithAltScreen` program option in v2.
+- **Alt screen and mouse mode** are declared per frame in `View()`; there is
+  no `tea.WithAltScreen` program option in v2. `View()` builds the
+  `tea.View` from `render()`, which holds the frame text and is what the
+  tests assert on.
 - Ordering: stacks in config order; issues within a stack by `created`
   desc (`newerIssue`), falling back to key number, then `updated`.
 - Search corpus: summary + key/number + status/type/project/stack/parent

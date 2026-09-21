@@ -52,7 +52,7 @@ func stateStyle(state string) lipgloss.Style {
 type keyMap struct {
 	Nav      listNav
 	Select   key.Binding
-	Cancel   key.Binding
+	Quit     key.Binding
 	PrevUp   key.Binding
 	PrevDown key.Binding
 	Shrink   key.Binding
@@ -67,7 +67,7 @@ type keyMap struct {
 // line stays short enough for a narrow popup (a cut line loses the quit keys
 // first).
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Filter, k.Select, k.Help, k.Cancel}
+	return []key.Binding{k.Filter, k.Select, k.Help, k.Quit}
 }
 
 // FullHelp is the panel's list of keys, one column per group: the
@@ -77,7 +77,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Filter, k.PrevUp, k.Shrink},
 		{k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
 		{k.Select, k.Copy},
-		{k.Help, k.Cancel},
+		{k.Help, k.Quit},
 	}
 }
 
@@ -85,7 +85,7 @@ func defaultKeys() keyMap {
 	return keyMap{
 		Nav:      defaultListNav(),
 		Select:   key.NewBinding(key.WithKeys("enter", "ctrl+o"), key.WithHelp("enter", "open in browser")),
-		Cancel:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc/q", "quit")),
+		Quit:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc/q", "quit")),
 		PrevUp:   key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑/⇧↓", "scroll the description")),
 		PrevDown: key.NewBinding(key.WithKeys("shift+down")),
 		Shrink:   key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←/⇧→", "resize the list")),
@@ -116,6 +116,7 @@ type model struct {
 	fetchErrs  []string
 	refreshing bool
 	netErr     string
+	stale      bool // the last refresh failed: the list is the cached one (see status)
 
 	// ui
 	rows    []row
@@ -207,8 +208,7 @@ func (m *model) resize() {
 
 // resizeList moves the divider between the list and the preview by one step.
 func (m *model) resizeList(grow bool) tea.Cmd {
-	m.split = stepSplit(m.split, grow)
-	saveSplit(stateDir(), m.split)
+	m.split = moveSplit(stateDir(), m.split, grow)
 	m.resize()
 	m.renderList()
 	return m.updatePreview()
@@ -222,7 +222,7 @@ func (m *model) setEntries(issues []issue) {
 func (m *model) applyFilter() {
 	q := strings.ToLower(strings.TrimSpace(m.ti.Value()))
 	m.rows = buildRows(m.entries, q, m.summaries, m.keysC, m.metas)
-	if q != "" {
+	if hasTerms(q) {
 		m.cursor = firstIssue(m.rows) // ranked: the best match is the first row
 		return
 	}
@@ -266,35 +266,33 @@ func (m *model) renderList() {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(truncate(m.rowLine(r, i == m.cursor, keyW), listW))
+		b.WriteString(m.rowLine(r, i == m.cursor, keyW, listW))
 	}
 	m.listVP.SetContent(b.String())
 	m.ensureVisible()
 }
 
-func (m *model) rowLine(r row, selected bool, keyW int) string {
+// rowLine is one row cut to width; the selected one is padded to it, so the
+// highlight spans the list.
+func (m *model) rowLine(r row, selected bool, keyW, width int) string {
 	if r.kind == "header" {
-		return stHeader.Render(r.stack)
+		return truncate(stHeader.Render(r.stack), width)
 	}
 	it := r.e.it
 	pad := strings.Repeat(" ", max(0, keyW-ansi.StringWidth(it.Key)))
 	if selected {
-		return stSel.Render("▌ "+it.Key+pad+" ") + highlight(it.Summary, r.idx, stSel)
+		return selPad(truncate(stSel.Render("▌ "+it.Key+pad+" ")+highlight(it.Summary, r.idx, stSel), width), width)
 	}
 	title := it.Summary
 	if r.match && len(r.idx) > 0 {
 		title = highlight(title, r.idx, lipgloss.NewStyle())
 	}
-	return "  " + stateStyle(it.state()).Render(it.Key) + pad + " " + title
+	return truncate("  "+stateStyle(it.state()).Render(it.Key)+pad+" "+title, width)
 }
 
 func (m *model) ensureVisible() {
-	// Scrolling up onto the first row of a group also reveals its header, so
-	// the group's name never sits hidden one line above the selection.
-	top := m.cursor
-	if top > 0 && top < len(m.rows) && m.rows[top-1].kind == "header" {
-		top--
-	}
+	// Scrolling up onto the first row of a group also reveals its header.
+	top := withHeader(m.cursor, len(m.rows), func(i int) bool { return m.rows[i].kind == "header" })
 	m.listVP.SetYOffset(scrollTo(m.listVP.YOffset(), m.listVP.Height(), len(m.rows), m.cursor, top))
 }
 
@@ -334,6 +332,7 @@ func (m *model) finishRefresh() tea.Cmd {
 		fetchedAt = time.Now()
 	} else {
 		m.netErr = strings.Join(m.fetchErrs, " · ")
+		m.stale = true
 	}
 	m.cache = issueCache{FetchedAt: fetchedAt, Issues: merged}
 	saveCache(m.cache)
@@ -360,9 +359,8 @@ func (m model) Init() tea.Cmd {
 			cmds = append(cmds, fetchSourceCmd(s))
 		}
 	}
-	if c := m.updatePreview(); c != nil {
-		cmds = append(cmds, c)
-	}
+	// No preview yet: the size is not known, and a render at a made-up width is
+	// one nobody sees. The first tea.WindowSizeMsg starts it, as in asgitlog.
 	return tea.Batch(cmds...)
 }
 
@@ -436,14 +434,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleClick(msg)
 
+	case tea.PasteMsg:
+		if m.panel.open {
+			return m, nil // nothing is typed under the panel
+		}
+		return m.toInput(msg)
+
 	default:
-		var cmd tea.Cmd
-		m.ti, cmd = m.ti.Update(msg)
-		return m, cmd
+		// Whatever else the input takes (its own paste, the cursor's blink).
+		return m.toInput(msg)
 	}
 }
 
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.netErr = "" // like a notice: the next key gives the help line back (status keeps the mark)
 	switch {
 	case msg.String() == "ctrl+c":
 		return m, tea.Quit
@@ -457,7 +461,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case msg.String() == "q" && m.ti.Value() == "":
 		// q quits only while the filter is empty; otherwise it is text.
 		return m, tea.Quit
-	case key.Matches(msg, m.keys.Cancel):
+	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Select):
 		if r := m.currentRow(); r != nil {
@@ -487,14 +491,25 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	return m.toInput(msg)
+}
+
+// toInput hands a message to the filter input and, when that changed the
+// query, filters again: a key, a paste from the terminal (tea.PasteMsg) or the
+// input's own ctrl+v all come through here, so the list never lags behind
+// what the input shows. A message that leaves the query alone moves nothing:
+// the cursor stays on the row it was on.
+func (m model) toInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var curURL string
 	if r := m.currentRow(); r != nil {
 		curURL = r.e.it.URL
 	}
-	var cmd tea.Cmd
-	m.ti, cmd = m.ti.Update(msg)
+	cmd, changed := typeInto(&m.ti, msg)
+	if !changed {
+		return m, cmd
+	}
 	m.applyFilter()
-	if strings.TrimSpace(m.ti.Value()) == "" {
+	if !hasTerms(m.ti.Value()) {
 		// Clearing the query rebuilt the rows; stay on the same ticket instead
 		// of whatever now sits at the old cursor index.
 		m.keepCursorOn(curURL)
@@ -524,12 +539,7 @@ func (m model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 }
 
 // View declares the screen: alt screen and cell-motion mouse reports.
-func (m model) View() tea.View {
-	v := tea.NewView(m.render())
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
-	return v
-}
+func (m model) View() tea.View { return popupView(m.render(), true) }
 
 // render stacks the sections in one frame (see frame.go); the tests assert on
 // it. There is no context line: the stacks already head their groups.
@@ -542,7 +552,7 @@ func (m model) render() string {
 	}
 	out = append(out, splitMain(m.listLines(), strings.Split(m.rightColumn(), "\n"),
 		m.listW(), m.detailsW(), m.counter(), pos)...)
-	out = append(out, framed(w, m.footLine()), hline(w, "╰", "╯", "", ""))
+	out = append(out, framed(w, footLine(m.flash, m.netErr, m.help, m.keys, w-4)), hline(w, "╰", "╯", "", ""))
 	if m.panel.open {
 		keys := keyLines(m.help, m.keys, w-10)
 		out = overlay(out, panelLines(nil, m.panel.cursor, keys, w-4, len(out)-2), w)
@@ -562,12 +572,7 @@ func (m model) counter() string {
 }
 
 // status is the refresh mark, for the edge over the input.
-func (m model) status() string {
-	if m.refreshing {
-		return stDim.Render("refreshing…")
-	}
-	return ""
-}
+func (m model) status() string { return refreshMark(m.refreshing, m.stale) }
 
 // listLines is the list as exactly bodyH lines of listW cells.
 // leftColumn is the list, or the reason there is nothing to list. A fetch
@@ -583,17 +588,7 @@ func (m model) leftColumn() string {
 	return emptyList("", m.ti.Value(), reason, m.listW())
 }
 
-func (m model) listLines() []string {
-	lines := strings.Split(m.leftColumn(), "\n")
-	for len(lines) < m.bodyH() {
-		lines = append(lines, "")
-	}
-	lines = lines[:m.bodyH()]
-	for i, l := range lines {
-		lines[i] = fit(l, m.listW())
-	}
-	return lines
-}
+func (m model) listLines() []string { return fitLines(m.leftColumn(), m.bodyH(), m.listW()) }
 
 func (m model) rightColumn() string {
 	w := m.prevW()
@@ -602,24 +597,4 @@ func (m model) rightColumn() string {
 		return "" // the list says why it is empty (leftColumn)
 	}
 	return previewHeader(r.e.it, w) + "\n\n" + m.prevVP.View()
-}
-
-// footer is the key help, or the network error while there is one. The
-// refresh mark lives on the edge over the input.
-// footMsg is what takes the help's place while there is something to say.
-func (m model) footMsg() string {
-	switch {
-	case m.flash.text != "":
-		return m.flash.view(m.width - 4)
-	case m.netErr != "":
-		return stError.Render(truncate(m.netErr, max(0, m.width-4)))
-	}
-	return ""
-}
-
-func (m model) footLine() string {
-	if msg := m.footMsg(); msg != "" {
-		return msg
-	}
-	return helpLine(m.help, m.keys, m.width-4)
 }

@@ -5,6 +5,7 @@ package main
 // the step and the default are asgitlog's.
 
 import (
+	"charm.land/bubbles/v2/viewport"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -55,4 +56,19 @@ func stepSplit(split int, grow bool) int {
 func splitWidths(innerW, split int) (listW, detailsW int) {
 	listW = max(10, innerW-1-innerW*split/100)
 	return listW, max(12, innerW-1-listW)
+}
+
+// moveSplit moves the divider one step and remembers where it was left.
+func moveSplit(dir string, split int, grow bool) int {
+	split = stepSplit(split, grow)
+	saveSplit(dir, split)
+	return split
+}
+
+// sizePanes gives the list and the preview their share of the main section.
+func sizePanes(list, prev *viewport.Model, listW, prevW, height int) {
+	list.SetWidth(listW)
+	list.SetHeight(height)
+	prev.SetWidth(prevW)
+	prev.SetHeight(height)
 }

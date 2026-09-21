@@ -345,14 +345,15 @@ func TestSelectedRowKeepsItsMatches(t *testing.T) {
 	if r.kind != "issue" || len(r.idx) == 0 {
 		t.Fatalf("the cursor should sit on the matching issue: %+v", r)
 	}
-	sel, plain := m.rowLine(r, true, m.keyW()), m.rowLine(r, false, m.keyW())
+	sel, plain := m.rowLine(r, true, m.keyW(), 200), m.rowLine(r, false, m.keyW(), 200)
 	if !strings.Contains(sel, matchOver(stSel).Render("readme")) {
 		t.Errorf("selected row lost its match: %q", sel)
 	}
 	if !strings.Contains(plain, stMatch.Render("readme")) {
 		t.Errorf("row lost its match: %q", plain)
 	}
-	if ansi.Strip(sel)[len("▌ "):] != ansi.Strip(plain)[len("  "):] {
+	// (the selected row is also padded to the column, so compare without it)
+	if strings.TrimRight(ansi.Strip(sel), " ")[len("▌ "):] != ansi.Strip(plain)[len("  "):] {
 		t.Errorf("selecting a row changes only its gutter: %q vs %q", ansi.Strip(sel), ansi.Strip(plain))
 	}
 	// cutting the row keeps the ellipsis inside the last styled run
@@ -458,5 +459,93 @@ func TestEmptyListSaysWhy(t *testing.T) {
 	list := ansi.Strip(m.listLines()[0])
 	if !strings.HasPrefix(list, " No matches") {
 		t.Errorf("the list should say there are no matches: %q", list)
+	}
+}
+
+// TestPasteFilters: a paste changes the query without a key press, and the
+// list must follow it (toInput). A key that leaves the query alone must not
+// move the cursor off the row it is on.
+func TestPasteFilters(t *testing.T) {
+	m := testModel(t)
+	res, _ := m.Update(tea.PasteMsg{Content: "zzzzqq"})
+	m = res.(model)
+	if m.ti.Value() != "zzzzqq" || len(m.rows) != 0 {
+		t.Fatalf("a paste should filter: query %q, %d rows", m.ti.Value(), len(m.rows))
+	}
+	for range "zzzzqq" {
+		res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+		m = res.(model)
+	}
+	if len(m.rows) < 2 {
+		t.Skipf("the fixture lists %d rows", len(m.rows))
+	}
+	res, _ = m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = res.(model)
+	if len(m.rows) < 2 {
+		t.Skipf("the query leaves %d rows", len(m.rows))
+	}
+	res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = res.(model)
+	at := m.cursor
+	res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	m = res.(model)
+	if m.cursor != at {
+		t.Errorf("a key that does not edit the query moved the cursor: %d -> %d", at, m.cursor)
+	}
+	m.panel.open = true
+	res, _ = m.Update(tea.PasteMsg{Content: "xx"})
+	if got := res.(model).ti.Value(); got != "a" {
+		t.Errorf("a paste under the panel should be dropped, the query is %q", got)
+	}
+}
+
+// TestSelectedRowSpansListWidth: the highlight reaches the divider, as in
+// every picker, and a long summary is cut to the column.
+func TestSelectedRowSpansListWidth(t *testing.T) {
+	m := testModel(t)
+	w := m.listW()
+	r := m.rows[m.cursor]
+	got := m.rowLine(r, true, m.keyW(), w)
+	if n := ansi.StringWidth(got); n != w || !strings.HasSuffix(ansi.Strip(got), " ") {
+		t.Errorf("selected row is %d cells, want %d padded: %q", n, w, ansi.Strip(got))
+	}
+	r.e.it.Summary = strings.Repeat("x", 200)
+	for _, sel := range []bool{true, false} {
+		if n := ansi.StringWidth(m.rowLine(r, sel, m.keyW(), w)); n > w || sel && n != w {
+			t.Errorf("long row (selected=%v) is %d cells, want %d", sel, n, w)
+		}
+	}
+}
+
+// TestNetworkErrorGivesTheHelpLineBack: a failed refresh takes the help line
+// like a notice, until the next key; the edge over the input keeps saying the
+// list is the cached one.
+func TestNetworkErrorGivesTheHelpLineBack(t *testing.T) {
+	m := testModel(t)
+	m.netErr, m.stale = "gh: could not resolve host", true
+	plain := strings.Split(ansi.Strip(m.render()), "\n")
+	if !strings.Contains(plain[len(plain)-2], "could not resolve host") || !strings.Contains(plain[0], "refresh failed") {
+		t.Fatalf("the error should take the help line and mark the edge:\n%s\n%s", plain[0], plain[len(plain)-2])
+	}
+	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	plain = strings.Split(ansi.Strip(res.(model).render()), "\n")
+	if !strings.Contains(plain[len(plain)-2], "type filter") || !strings.Contains(plain[0], "refresh failed") {
+		t.Errorf("the next key gives the help line back, the mark stays:\n%s\n%s", plain[0], plain[len(plain)-2])
+	}
+}
+
+// TestSpaceIsNotAQuery: a query without terms (spaces, a bare ~) searches for
+// nothing, so it neither ranks the list nor moves the cursor (hasTerms).
+func TestSpaceIsNotAQuery(t *testing.T) {
+	m := testModel(t)
+	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = res.(model)
+	at, rows := m.cursor, len(m.rows)
+	for _, k := range []string{" ", "~"} {
+		res, _ = m.Update(tea.KeyPressMsg{Code: []rune(k)[0], Text: k})
+		m = res.(model)
+		if m.cursor != at || len(m.rows) != rows {
+			t.Errorf("after %q: cursor %d -> %d, rows %d -> %d", k, at, m.cursor, rows, len(m.rows))
+		}
 	}
 }

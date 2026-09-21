@@ -37,8 +37,7 @@ func main() {
 
 	stacks, err := loadStacks()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "asgotoissues:", err)
-		os.Exit(1)
+		fatal("asgotoissues", err.Error())
 	}
 	cache := loadCache()
 	stale := time.Since(cache.FetchedAt) >= cacheFresh

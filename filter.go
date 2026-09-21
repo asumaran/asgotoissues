@@ -88,7 +88,7 @@ func matchBonus(e *entry, h hit, q string) int {
 // tickets. When filtering, only matching tickets (and their headers) survive
 // and they are ranked: best match first, the stack that holds it on top.
 func buildRows(entries []*entry, q string, summaries, keys, metas []string) []row {
-	filtering := q != ""
+	filtering := hasTerms(q)
 	var hits map[int]hit
 	if filtering {
 		hits = findHits(q, summaries, keys, metas)

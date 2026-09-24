@@ -302,13 +302,13 @@ func TestFrameGeometry(t *testing.T) {
 		m.panel.open = false
 		plain := strings.Split(ansi.Strip(m.render()), "\n")
 		if !strings.HasPrefix(plain[0], "╭") || !strings.HasPrefix(plain[len(plain)-1], "╰") ||
-			!strings.Contains(plain[mainY(false)], "┬") || !strings.Contains(plain[len(plain)-3], "─ 2/2 ─┴") ||
+			!strings.Contains(plain[mainY], "┬") || !strings.Contains(plain[len(plain)-3], "─ 2/2 ─┴") ||
 			!strings.HasPrefix(plain[1], "│ asgotoissues ❯ ") {
 			t.Errorf("%v: frame sections misplaced:\n%s", size, strings.Join(plain, "\n"))
 		}
 		// The list starts at listY: the stack's name and the selected issue
 		// under it, or the issue alone when the body is a single line.
-		if top := plain[listY(false)]; !strings.HasPrefix(top, "│alpha") && !strings.HasPrefix(top, "│▌ PLAT-10") {
+		if top := plain[listY]; !strings.HasPrefix(top, "│alpha") && !strings.HasPrefix(top, "│▌ PLAT-10") {
 			t.Errorf("%v: the list does not start at listY: %q", size, top)
 		}
 		help := plain[len(plain)-2]
@@ -322,13 +322,13 @@ func TestClickSelectsTicketRow(t *testing.T) {
 	m := testModel(t)
 	// rows: header(alpha) PLAT-100 header(beta) BETA-7
 	click := func(x, y int) tea.MouseClickMsg { return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft} }
-	res, _ := m.Update(click(3, listY(false)+3))
+	res, _ := m.Update(click(3, listY+3))
 	got := res.(model)
 	if r := got.currentRow(); r == nil || r.e.it.Key != "BETA-7" || got.openURL != "" {
 		t.Fatalf("click must select BETA-7 without opening it: cursor=%d open=%q", got.cursor, got.openURL)
 	}
-	for _, c := range []tea.MouseClickMsg{click(3, listY(false)+2), click(got.listW()+10, listY(false)+1),
-		click(got.listW()+1, listY(false)+1), click(0, listY(false)+1), click(3, mainY(false)), click(3, 1)} {
+	for _, c := range []tea.MouseClickMsg{click(3, listY+2), click(got.listW()+10, listY+1),
+		click(got.listW()+1, listY+1), click(0, listY+1), click(3, mainY), click(3, 1)} {
 		res, _ = got.Update(c)
 		if res.(model).cursor != got.cursor {
 			t.Errorf("click %+v moved the cursor to %d", c, res.(model).cursor)
@@ -397,7 +397,7 @@ func TestMouseWheelFollowsThePointer(t *testing.T) {
 	next, _ := testModel(t).Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m := next.(model)
 	wheel := func(x int, b tea.MouseButton) {
-		next, _ := m.Update(tea.MouseWheelMsg{X: x, Y: listY(false), Button: b})
+		next, _ := m.Update(tea.MouseWheelMsg{X: x, Y: listY, Button: b})
 		m = next.(model)
 	}
 	first := m.cursor

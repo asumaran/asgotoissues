@@ -149,7 +149,7 @@ func TestRankingFindsGitHubKeys(t *testing.T) {
 		{Key: "tool#12", Stack: "home", Project: "me/tool", Summary: "twelve", Meta: []string{"me/tool", "bug"}},
 		{Key: "shop#120", Stack: "home", Project: "me/shop", Summary: "one twenty"},
 	})
-	summaries, keys, metas := corpora(entries)
+	summaries, keys, metas := corpora(entries, trackerTitle)
 	top := func(q string) string {
 		for _, r := range testRows(entries, q, summaries, keys, metas) {
 			if r.kind == "issue" {
@@ -200,7 +200,7 @@ func TestGitHubFetchNestsParents(t *testing.T) {
 	if g.URL != "https://github.com/acme/shop/issues/5" || g.Summary != "the epic" || g.Status != "open" || g.Project != "acme/shop" || g.Source != kindGitHub {
 		t.Errorf("ghost: %+v", g)
 	}
-	rows := buildTree(buildEntries(res.issues), nil, nil, orderKey, prsAll, false, nil, nil)
+	rows := buildTree(buildEntries(res.issues), nil, nil, opts(orderKey, prsAll, false, nil), nil)
 	if got := rowKeys(rows); got != "H:home acme/shop#5 >acme/shop#4 >>acme/shop#1 >>acme/shop#2 me/shop#6 >me/shop#3" {
 		t.Errorf("tree = %s", got)
 	}

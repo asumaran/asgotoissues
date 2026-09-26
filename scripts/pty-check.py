@@ -169,8 +169,12 @@ pulls = [
     pr("acme/front", 41, "PLAT-2099 guard the export", "OPEN", "acme", "PLAT-2099", mergeable="CONFLICTING"),
     pr("acme/infra", 7, "PLAT-2099 policy config", "MERGED", "acme", "PLAT-2099"),
 ]
-write(os.path.join(home, ".local", "state", "herdr", "plugins", "asumaran.asgotoissues", "issuecache.json"),
-      json.dumps({"fetched_at": now, "issues": tickets, "pulls": pulls}))
+state = os.path.join(home, ".local", "state", "herdr", "plugins", "asumaran.asgotoissues")
+write(os.path.join(state, "issuecache.json"), json.dumps({"fetched_at": now, "issues": tickets, "pulls": pulls}))
+# everything listed (a fresh state dir shows the work going on only); no short
+# titles (nothing is spawned); no checkouts read
+write(os.path.join(state, "show"), "all\n")
+write(os.path.join(state, "titles"), "original\n")
 open_log = os.path.join(SANDBOX, "open.log")
 opener = write(os.path.join(SANDBOX, "opener"), '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s"\n' % open_log, 0o755)
 clip_log = os.path.join(SANDBOX, "clip.log")
@@ -179,7 +183,8 @@ clipboard = write(os.path.join(SANDBOX, "clipboard"), '#!/bin/sh\ncat > "%s"\n' 
 def session():
     env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", HOME=home, NETRC=netrc,
                ASGOTOISSUES_CONFIG=config, ASGOTOISSUES_OPENER=opener, ASGOTOISSUES_CLIPBOARD=clipboard,
-               XDG_CONFIG_HOME=os.path.join(home, ".config"))
+               XDG_CONFIG_HOME=os.path.join(home, ".config"), ASGOTOISSUES_CHECKOUTS=SANDBOX,
+               ASGOTOISSUES_NO_SUMMARIES="1")
     for k in ("HERDR_PLUGIN_STATE_DIR", "XDG_STATE_HOME", "JIRA_TOKEN_ACME", "JIRA_TOKEN_GLOBEX"):
         env.pop(k, None)
     if os.path.exists(open_log): os.remove(open_log)
@@ -221,7 +226,8 @@ f = s.start("asgotoissues ❯"); dump("open", f)
 p = s.send(b"\x1bOP", 0.6); dump("panel", p)
 check(len(p) == len(f) and any("╭─ options " in l for l in p) and any("Keys" in l for l in p) and any("Order" in l and "‹created›" in l for l in p)
       and any("PRs" in l and "‹all›" in l for l in p) and any("Rows" in l and "‹two lines›" in l for l in p)
-      and any("Merged" in l and "‹show›" in l for l in p), "f1 opens the panel over a frame that keeps its size")
+      and any("Show" in l and "‹all›" in l for l in p) and any("Group" in l and "‹tree›" in l for l in p),
+      "f1 opens the panel over a frame that keeps its size")
 s.send(b"zz", 0.6); p = s.send(b"\x1b", 0.6)
 check(s.proc.poll() is None and not any("╭─ options " in l for l in p) and prompt(p) == prompt(f), "esc closes the panel, which took the keys: %r" % prompt(p))
 p = s.send(b"?", 0.6)
@@ -234,37 +240,37 @@ check(f[0].startswith("╭") and f[-1].startswith("╰") and "┬" in f[2],
 check(counter(f) == "4/4" and "type filter" in f[-2] and "esc/q quit" in f[-2], "counter %r (my tickets: no ghost, no PR) and help %r" % (counter(f), f[-2]))
 check(b"\x1b[?1049h" in s.raw, "program entered the alt screen")
 rows = left(f)
-check(any("acme" in r for r in rows) and any("globex" in r for r in rows), "tickets are grouped by stack: %r" % rows)
-check(sum(re.match(r"[▌ ] +(PLAT|SHOP)-[0-9]", r) is not None for r in rows) == 4, "every cached ticket is listed, the ghost epic too: %r" % rows)
-title = next(r for r in rows if r.startswith("▌ PLAT-2099"))
-detail = next((r for r in rows if r.startswith("▌") and "In Progress · Task" in r), "")
-check(detail and detail.index("In Progress") == title.index("Enforce"), "the story's details sit under its title, past the key column, selected too: %r" % rows)
-prl = next((r for r in rows if r.startswith("  ") and "↳ front#41 PLAT-2099" in r), "")
-prd = next((r for r in rows if r.startswith(" ") and r.lstrip().startswith("open · con")), "")
-check(prl and prl.index("↳") == title.index("Enforce") and prd and prd.index("open") == prl.index("PLAT-2099")
-      and any(r.startswith("  ") and "↳ infra#7 PLAT-2099" in r for r in rows) and any(r.lstrip().startswith("merged · ") for r in rows),
-      "the PRs start where their ticket's title starts, key then title, their details under the title: %r" % rows)
-epic = next((r for r in rows if r.startswith("  SHOP-600 ")), "")
-sub = next((r for r in rows if r.startswith("  ") and "SHOP-602" in r), "")
-check(epic and sub and sub.index("SHOP-602") == epic.index("Test the shop"), "the sub-task starts where the ghost epic's title starts: %r" % rows)
+check(any(r == "▼ acme" for r in rows) and any(r == "▼ globex" for r in rows), "tickets are grouped by stack, each header with its arrow: %r" % rows)
+check(sum(re.search(r"(plat|shop)-[0-9]+ ", r) is not None for r in rows) == 4, "every cached ticket is listed, the ghost epic too, keys in lower case: %r" % rows)
+title = next(r for r in rows if r.startswith("▌▼ plat-2099 "))
+detail = next((r for r in rows if r.startswith("▌") and "in progress · today" in r), "")
+check(detail and detail.index("in progress") == title.index("plat-2099") + 4, "the story's details start 4 cells past its key, selected too: %r" % rows)
+prl = next((r for r in rows if "○ front#41 PLAT-2099" in r), "")
+prd = next((r for r in rows if r.lstrip().startswith("in review · conflicts")), "")
+check(prl and prl.index("○") == title.index("plat-2099") + 2 and prd and prd.index("in review") == prl.index("front#41")
+      and any("○ infra#7 PLAT-2099" in r for r in rows) and any(r.lstrip().startswith("merged · ") for r in rows),
+      "the PRs are bullets of their ticket, their keys where its details start, their details under the key: %r" % rows)
+epic = next((r for r in rows if r.startswith(" ▼ shop-600 ")), "")
+sub = next((r for r in rows if "shop-602" in r), "")
+check(epic and sub.startswith(" └──── shop-602") and sub.index("shop-602") == epic.index("shop-600") + 4, "the sub-task hangs from the ghost epic's arrow: %r" % rows)
 body = "\n".join(f)
 check("PLAT-2099" in body and "Context" in body and "add the guard" in body, "preview renders the description")
 check("rgb:" not in f[1], "the background reply is not typed into the filter")
 # SGR press+release on the eighth list line (acme; PLAT-2099, ↳front#41, ↳infra#7 on two lines each; PLAT-2098): 1-based column 5, line 3+7+1
 f = s.send(b"\x1b[<0;5;11M\x1b[<0;5;11m", 0.5)
 rows = left(f)
-check(any(r.startswith("▌") and "PLAT-2098" in r for r in rows) and s.proc.poll() is None,
+check(any(r.startswith("▌") and "plat-2098" in r for r in rows) and s.proc.poll() is None,
       "a click selects the ticket without opening it: %r" % rows)
 f = s.send(b"\x1b[<64;5;11M", 0.5)   # the wheel, up, over the list
 rows = left(f)
 check(any(r.startswith("▌") and "infra#7" in r for r in rows) and s.proc.poll() is None,
       "the wheel over the list moves the cursor, onto a PR row too: %r" % rows)
 body = "\n".join(f)
-check("infra#7 · feat/plat-2099 → main · by me" in body and "[merged]" in body, "a PR row previews the PR's facts: %r" % [l for l in f if "infra#7" in l])
+check("infra#7 · feat/plat-2099 → main · by me" in body and any("│ merged" in l for l in f), "a PR row previews the PR's facts: %r" % [l for l in f if "infra#7" in l])
 f = s.send(b"602", 0.6); dump("filtered", f)
 rows = left(f)
-check(any(r.startswith("▌") and "SHOP-602" in r for r in rows) and not any("PLAT-" in r for r in rows), "a ticket number filters: %r" % rows)
-check(any(r.startswith("  SHOP-600") for r in rows), "the hit keeps the parent that leads to it, as context: %r" % rows)
+check(any(r.startswith("▌") and "shop-602" in r for r in rows) and not any("plat-" in r for r in rows), "a ticket number filters: %r" % rows)
+check(any("shop-600" in r and not r.startswith("▌") for r in rows), "the hit keeps the parent that leads to it, as context: %r" % rows)
 check(counter(f) == "1/4", "the counter follows the filter: %r" % counter(f))
 s.send(ENTER, 0.3)
 check(s.finish() == 0, "clean exit after enter")
@@ -274,7 +280,8 @@ check(opened() == ["https://globex.example/browse/SHOP-602"], "enter opens the t
 s = session()
 f = s.start("asgotoissues ❯")
 rows = left(f)
-check(any(r == "home" for r in rows) and any("tool#12" in r for r in rows), "the github stack has its group: %r" % rows)
+check(any(r == "▼ home" for r in rows) and any("tool#12" in r for r in rows) and any(r.lstrip().startswith("in progress · no PR") for r in rows),
+      "the github stack has its group, the issue's status from its labels: %r" % rows)
 f = s.send(b"tool#12", 0.8); dump("github issue", f)
 rows = left(f)
 check(any(r.startswith("▌") and "tool#12" in r for r in rows) and counter(f) == "1/4", "a repo#number filters: %r" % rows)
@@ -300,7 +307,7 @@ s = session()
 s.start("asgotoissues ❯")
 f = s.send(DOWN, 0.4)
 rows = left(f)
-check(any(r.startswith("▌ ") and "↳ front#41 PLAT-2099" in r for r in rows) and any(r.startswith("▌ ") and r.lstrip("▌ ").startswith("open · con") for r in rows),
+check(any(r.startswith("▌") and "○ front#41 PLAT-2099" in r for r in rows) and any(r.startswith("▌") and r.lstrip("▌ ").startswith("in review · con") for r in rows),
       "down from the story lands on its PR, both lines selected: %r" % rows)
 f = s.send(CTRL_S, 0.6); dump("order", f)
 check("order: updated" in f[-2], "ctrl+s says the order it set: %r" % f[-2])
@@ -319,12 +326,34 @@ s = session()
 f = s.start("asgotoissues ❯")
 f = s.send(b" ", 0.6); dump("folded", f)
 rows = left(f)
-check(any(r.startswith("▌▸PLAT-2099") for r in rows) and not any("front#41" in r for r in rows) and any("PLAT-2098" in r for r in rows),
-      "space folds the story's PRs away and marks it in the gutter: %r" % rows)
+check(any(r.startswith("▌▶") and "plat-2099" in r for r in rows) and not any("front#41" in r for r in rows) and any("plat-2098" in r for r in rows),
+      "space folds the story's PRs away and turns its arrow: %r" % rows)
 f = s.send(b" ", 0.6)
 rows = left(f)
-check(any("front#41" in r for r in rows) and not any("▸" in r for r in rows), "space again unfolds it: %r" % rows)
+check(any("front#41" in r for r in rows) and not any("▶" in r for r in rows), "space again unfolds it: %r" % rows)
 check(prompt(f) == "asgotoissues ❯ Search by title, key, status, repo, PR…", "space with an empty filter is not typed: %r" % f[1])
+os.write(s.master, ESC); s.pump(0.4); s.finish()
+
+# ---------- run 1f: shift+tab folds the tree a level, ctrl+g groups by phase, ctrl+t cycles the show ----------
+s = session()
+f = s.start("asgotoissues ❯")
+f = s.send(b"\x1b[Z", 0.6); dump("level", f)
+rows = left(f)
+check("level 1" in f[-2] and not any("front#41" in r or "shop-602" in r for r in rows) and any("plat-2098" in r for r in rows),
+      "shift+tab shows the roots alone, folded: %r" % rows)
+f = s.send(b"\t", 0.6)
+check("all levels" in f[-2] and any("shop-602" in r for r in left(f)), "tab unfolds everything again: %r" % f[-2])
+f = s.send(b"\x07", 0.6); dump("phase", f)
+rows = left(f)
+check(any("── PR in review (1)" in r for r in rows) and any("plat-2099 › front#41" in r for r in rows) and any("── no PR" in r for r in rows),
+      "ctrl+g lists by phase, each PR with its path: %r" % rows)
+f = s.send(b"\x07", 0.6)
+check(any(r.startswith("▌▼ plat-2099") or "▼ plat-2099" in r for r in left(f)), "ctrl+g again is the tree: %r" % left(f))
+f = s.send(b"\x14", 0.6)
+rows = left(f)
+check("show: working" in f[-2] and not any("plat-2098" in r for r in rows) and any("plat-2099" in r for r in rows),
+      "ctrl+t shows the work going on: the ticket not started goes: %r" % rows)
+for _ in range(2): s.send(b"\x14", 0.3)   # back to all for the runs after this one
 os.write(s.master, ESC); s.pump(0.4); s.finish()
 
 # ---------- run 2: q quits with an empty filter ----------

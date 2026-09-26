@@ -44,6 +44,8 @@ type pull struct {
 	Approvals        int       `json:"approvals,omitempty"`        // latest reviews that approve
 	ChangesRequested int       `json:"changes_requested,omitempty"`
 	ReviewRequests   int       `json:"review_requests,omitempty"` // reviewers still asked
+	ToAnswer         bool      `json:"to_answer,omitempty"`       // a review thread not resolved whose last comment is not mine
+	Behind           int       `json:"behind,omitempty"`          // commits of the base the head lacks
 	Refs             []string  `json:"refs,omitempty"`            // what it says it is for (strong)
 	WeakRefs         []string  `json:"weak_refs,omitempty"`       // keys merely mentioned in the body
 	Created          time.Time `json:"created"`
@@ -54,8 +56,8 @@ func (p pull) number() string { return strconv.Itoa(p.Number) }
 
 // ---- attention ----
 
-// The levels a flag can have, worst last. A ticket takes the worst level of
-// its PRs and its descendants (attentionOf).
+// The levels a flag can have, worst last: they order the list (attention),
+// they are not what the row looks like (tone is).
 const (
 	levelNone = iota
 	levelWarn
@@ -63,74 +65,137 @@ const (
 	levelBad
 )
 
-// prFlag is one thing a PR's row says about it: `conflicts`, `approved`.
+// The tones a word of a details line is drawn in.
+const (
+	toneDim = iota
+	toneGreen
+	toneYellow
+	toneRed
+	toneBlue
+)
+
+// prFlag is one word a PR's row says about it: its state (`in review`),
+// something it needs (`conflicts`) or a fact (`behind master`).
 type prFlag struct {
 	text  string
 	level int
+	tone  int
 }
 
-// flags is what a PR needs, in the order the row shows them. base is the PR
-// this one is stacked on (its base branch is the head of another fetched PR
-// of the repo), nil when it sits on a plain branch. A thing someone must act
-// on is bad only when that someone is me: my PR, or a review asked of me;
-// on another person's PR it is a warning.
-func (p pull) flags(base *pull) []prFlag {
-	switch p.State {
-	case prMerged:
-		return []prFlag{{"merged", levelNone}}
-	case prClosed:
-		return []prFlag{{"closed", levelNone}}
+// state is the PR's own state, the first word of its details: merged,
+// closed, draft, changes requested, approved or in review. A change asked
+// of me is bad; an approval with nothing in its way is ready (ok); a PR
+// that waits for a review is a warning.
+func (p pull) state(base *pull) prFlag {
+	switch {
+	case p.State == prMerged:
+		return prFlag{"merged", levelNone, toneGreen}
+	case p.State == prClosed:
+		return prFlag{"closed", levelNone, toneDim}
+	case p.Draft:
+		return prFlag{"draft", levelNone, toneDim}
+	case p.ReviewDecision == "CHANGES_REQUESTED" || p.ReviewDecision == "" && p.ChangesRequested > 0:
+		return prFlag{"changes requested", p.act(), toneRed}
+	case p.ReviewDecision == "APPROVED" || p.ReviewDecision == "" && p.Approvals > 0:
+		lvl := levelNone
+		if !p.blocked(base) && !p.pending() {
+			lvl = levelOK
+		}
+		return prFlag{"approved", lvl, toneGreen}
 	}
-	act := levelWarn
+	lvl := levelNone
+	if p.ReviewDecision == "REVIEW_REQUIRED" || p.ReviewRequests > 0 {
+		lvl = levelWarn
+	}
+	return prFlag{"in review", lvl, toneYellow}
+}
+
+// act is the level of something someone must act on: bad when that someone
+// is me (my PR), a warning on another person's.
+func (p pull) act() int {
 	if p.Mine {
-		act = levelBad
+		return levelBad
+	}
+	return levelWarn
+}
+
+func (p pull) conflicting() bool { return p.Mergeable == "CONFLICTING" || p.MergeState == "DIRTY" }
+func (p pull) failing() bool     { return p.Checks == "FAILURE" || p.Checks == "ERROR" }
+func (p pull) pending() bool     { return p.Checks == "PENDING" || p.Checks == "EXPECTED" }
+
+// blocked reports whether something keeps it from merging as it is.
+func (p pull) blocked(base *pull) bool {
+	return p.conflicting() || p.failing() || base != nil && base.State == prMerged
+}
+
+// needs is what the PR needs, in the order the row says it: bad (red) when
+// it is mine to do, a warning (yellow) on another person's PR. base is the
+// PR this one is stacked on (its base branch is the head of another fetched
+// PR of the repo), nil when it sits on a plain branch.
+func (p pull) needs(base *pull) []prFlag {
+	if p.State != prOpen {
+		return nil
 	}
 	var out []prFlag
-	blocked := false // something keeps it from merging as it is
-	add := func(text string, level int) {
-		out = append(out, prFlag{text, level})
+	add := func(text string, lvl int) {
+		tone := toneYellow
+		if lvl == levelBad {
+			tone = toneRed
+		}
+		out = append(out, prFlag{text, lvl, tone})
 	}
-	if p.Mergeable == "CONFLICTING" || p.MergeState == "DIRTY" {
-		add("conflicts", act)
-		blocked = true
+	if p.conflicting() {
+		add("conflicts", p.act())
 	}
-	changes := p.ReviewDecision == "CHANGES_REQUESTED" || p.ReviewDecision == "" && p.ChangesRequested > 0
-	if changes {
-		add("changes requested", act)
-		blocked = true
+	if p.failing() {
+		add("ci failed", p.act())
 	}
-	if p.Checks == "FAILURE" || p.Checks == "ERROR" {
-		add("ci failed", act)
-		blocked = true
+	if p.ToAnswer && p.Mine {
+		add("to answer", levelBad)
+	}
+	if base != nil && base.State == prMerged {
+		add("base merged", p.act())
 	}
 	if p.ReviewRequested {
 		add("review requested", levelBad)
 	}
-	if base != nil && base.State == prMerged {
-		add("base merged", act)
-		blocked = true
+	return out
+}
+
+// facts is what else the row says, dim: the base moved (yellow when the
+// repo will not merge it so), what it is stacked on, checks still running,
+// and who wrote it when it is not me.
+func (p pull) facts(base *pull) []prFlag {
+	var out []prFlag
+	if p.State == prOpen {
+		if p.Behind > 0 || p.MergeState == "BEHIND" {
+			base := p.Base
+			if base == "" {
+				base = "base"
+			}
+			f := prFlag{"behind " + base, levelNone, toneDim}
+			if p.MergeState == "BEHIND" {
+				f.level, f.tone = levelWarn, toneYellow
+			}
+			out = append(out, f)
+		}
+		if base != nil && base.State == prOpen {
+			out = append(out, prFlag{"stacked on #" + base.number(), levelNone, toneDim})
+		}
+		if p.pending() {
+			out = append(out, prFlag{"ci pending", levelWarn, toneDim})
+		}
 	}
-	if p.MergeState == "BEHIND" {
-		add("behind base", levelWarn)
-	}
-	if base != nil && base.State == prOpen {
-		add("on #"+base.number(), levelNone)
-	}
-	if p.Draft {
-		add("draft", levelNone)
-	}
-	pending := p.Checks == "PENDING" || p.Checks == "EXPECTED"
-	if pending {
-		add("ci pending", levelWarn)
-	}
-	approved := p.ReviewDecision == "APPROVED" || p.ReviewDecision == "" && p.Approvals > 0 && p.ChangesRequested == 0
-	switch {
-	case approved && !blocked && !pending && !p.Draft:
-		add("approved", levelOK)
-	case !approved && !blocked && !p.Draft && (p.ReviewDecision == "REVIEW_REQUIRED" || p.ReviewRequests > 0):
-		add("awaiting review", levelWarn)
+	if !p.Mine && p.Author != "" {
+		out = append(out, prFlag{"by " + p.Author, levelNone, toneDim})
 	}
 	return out
+}
+
+// flags is everything the row says about a PR after its state: what it
+// needs, then the facts.
+func (p pull) flags(base *pull) []prFlag {
+	return append(p.needs(base), p.facts(base)...)
 }
 
 // level is the worst level of a set of flags.
@@ -140,6 +205,11 @@ func level(flags []prFlag) int {
 		l = max(l, f.level)
 	}
 	return l
+}
+
+// attention is the PR's level: the worst of its state and its flags.
+func (p pull) attention(base *pull) int {
+	return max(p.state(base).level, level(p.flags(base)))
 }
 
 // ---- references ----

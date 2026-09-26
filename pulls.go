@@ -39,6 +39,7 @@ const ghPullsQuery = `query($q: String!, $after: String) {
         latestReviews(first: 20) { nodes { state } }
         statusCheckRollup { state }
         closingIssuesReferences(first: 10) { nodes { number repository { nameWithOwner } } }
+        reviewThreads(first: 50) { nodes { isResolved comments(last: 1) { nodes { author { login } } } } }
       }
     }
   }
@@ -88,6 +89,18 @@ type ghPullNode struct {
 			Repository ghRepo `json:"repository"`
 		} `json:"nodes"`
 	} `json:"closingIssuesReferences"`
+	ReviewThreads struct {
+		Nodes []struct {
+			IsResolved bool `json:"isResolved"`
+			Comments   struct {
+				Nodes []struct {
+					Author struct {
+						Login string `json:"login"`
+					} `json:"author"`
+				} `json:"nodes"`
+			} `json:"comments"`
+		} `json:"nodes"`
+	} `json:"reviewThreads"`
 }
 
 type ghURLNode struct {
@@ -145,7 +158,61 @@ func (p pullsProvider) pulls(ctx context.Context) ([]pull, error) {
 		out = append(out, pr)
 	}
 	qualifyClashingPullKeys(out)
+	ghBehind(ctx, out) // its failure leaves the counts at zero, never fails the source
 	return out, nil
+}
+
+// behindChunk is how many PRs one compare query asks about.
+const behindChunk = 40
+
+// ghBehind fills in how many commits of its base each open PR lacks. The
+// count comes from the base branch compared with the head, which takes the
+// head as an argument, so it cannot ride in the search: one query with an
+// alias per PR, in chunks. A PR whose head lives in a fork, or a query that
+// fails, keeps zero.
+func ghBehind(ctx context.Context, pulls []pull) {
+	var open []int
+	for i, p := range pulls {
+		if p.State == prOpen && p.Head != "" && p.Base != "" && strings.Contains(p.Repo, "/") {
+			open = append(open, i)
+		}
+	}
+	for start := 0; start < len(open); start += behindChunk {
+		chunk := open[start:min(start+behindChunk, len(open))]
+		var q strings.Builder
+		q.WriteString("query {")
+		for n, i := range chunk {
+			p := pulls[i]
+			owner, name, _ := strings.Cut(p.Repo, "/")
+			fmt.Fprintf(&q, " p%d: repository(owner: %q, name: %q) { pullRequest(number: %d) { baseRef { compare(headRef: %q) { behindBy } } } }",
+				n, owner, name, p.Number, p.Head)
+		}
+		q.WriteString(" }")
+		out, err := ghRun(ctx, "api", "graphql", "-f", "query="+q.String())
+		if len(out) == 0 && err != nil {
+			return
+		}
+		var resp struct {
+			Data map[string]*struct {
+				PullRequest *struct {
+					BaseRef *struct {
+						Compare *struct {
+							BehindBy int `json:"behindBy"`
+						} `json:"compare"`
+					} `json:"baseRef"`
+				} `json:"pullRequest"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(out, &resp) != nil {
+			return
+		}
+		for n, i := range chunk {
+			r := resp.Data[fmt.Sprintf("p%d", n)]
+			if r != nil && r.PullRequest != nil && r.PullRequest.BaseRef != nil && r.PullRequest.BaseRef.Compare != nil {
+				pulls[i].Behind = r.PullRequest.BaseRef.Compare.BehindBy
+			}
+		}
+	}
 }
 
 // ghViewer is the login gh is signed in as: what makes a PR mine.
@@ -201,6 +268,14 @@ func (n ghPullNode) pull(stackName, me string) pull {
 	}
 	if n.StatusCheckRollup != nil {
 		pr.Checks = n.StatusCheckRollup.State
+	}
+	// A thread waits for me when nobody resolved it and the last word is not
+	// mine.
+	for _, t := range n.ReviewThreads.Nodes {
+		c := t.Comments.Nodes
+		if !t.IsResolved && len(c) > 0 && !strings.EqualFold(c[len(c)-1].Author.Login, me) {
+			pr.ToAnswer = true
+		}
 	}
 	var closing []string
 	for _, c := range n.ClosingIssuesReferences.Nodes {

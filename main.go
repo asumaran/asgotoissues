@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -19,7 +20,48 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
+
+// summarizeAll writes every missing short title, one call after another,
+// and says how many it wrote.
+func summarizeAll(m *model) (int, error) {
+	n := 0
+	for {
+		var batch []summaryItem
+		for _, b := range pendingSummaries(m.entries, m.summ) {
+			fresh := false
+			for _, it := range b {
+				if it.Summary == "" && !m.summTried[it.ID] {
+					fresh = true
+				}
+			}
+			if fresh {
+				batch = b
+				break
+			}
+		}
+		if batch == nil {
+			return n, nil
+		}
+		for _, it := range batch {
+			m.summTried[it.ID] = true
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		got, err := summarize(ctx, batch)
+		cancel()
+		if err != nil {
+			return n, err
+		}
+		for k, v := range got {
+			m.summ[k] = v
+		}
+		settleHashes(m.entries, m.summ, got)
+		saveSummaries(m.summ)
+		n += len(got)
+		m.summaries, m.keysC, m.metas = corpora(m.entries, m.titleOf)
+	}
+}
 
 // version is the release tag; overridden at build time via
 // -ldflags "-X main.version=vX.Y.Z" (see scripts/release.sh and CI).
@@ -31,6 +73,7 @@ func main() {
 	query := flag.String("query", "", "with -dump: print the matches and their scores instead of the list")
 	show := flag.String("show", "", "with -dump: print this issue's description as Markdown")
 	order := flag.String("order", "", "with -dump: the order of every level (created, updated, key, attention); the saved setting otherwise")
+	summarizeNow := flag.Bool("summarize", false, "with -dump: write the missing short titles first (runs the summarizer)")
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), "usage: asgotoissues [flags]")
 		flag.PrintDefaults()
@@ -50,7 +93,7 @@ func main() {
 	stale := time.Since(cache.FetchedAt) >= cacheFresh
 
 	if *dump {
-		runDump(os.Stdout, stacks, cache, stale, *query, *show, *order)
+		runDump(os.Stdout, stacks, cache, stale, *query, *show, *order, *summarizeNow)
 		return
 	}
 
@@ -73,7 +116,7 @@ func main() {
 // the cache is stale, so it exercises the same fetch path the TUI uses in
 // the background. order, when given, beats the saved setting and is not
 // saved.
-func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, show, order string) {
+func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, show, order string, summarizeNow bool) {
 	if stale {
 		merged, pulls, errs := refreshSynchronously(stacks, cache)
 		for _, e := range errs {
@@ -102,13 +145,18 @@ func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, s
 		order = loadSetting(stateDir(), "order")
 	}
 	backfillParentURLs(cache.Issues, stacks)
-	entries := buildEntries(cache.Issues)
-	pulls := cache.Pulls
-	unlinked := linkPulls(entries, pulls)
-	summaries, keys, metas := corpora(entries)
+	m := newModel(stacks, cache, false)
+	m.order, m.show, m.group, m.rowsM, m.prs = parseOrder(order), showAll, groupTree, rowsTwo, prsAll
+	if summarizeNow {
+		n, err := summarizeAll(&m)
+		fmt.Fprintf(w, "short titles: %d written\n", n)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "short titles:", err)
+		}
+	}
 	if query != "" {
 		fmt.Fprintf(w, "query %q:\n", query)
-		for _, r := range buildRows(entries, pulls, unlinked, parseOrder(order), prsAll, false, nil, query, summaries, keys, metas) {
+		for _, r := range buildRows(m.entries, m.pulls, m.unlinked, m.opts(), query, m.summaries, m.keysC, m.metas) {
 			if r.kind != rowIssue || !r.match {
 				continue
 			}
@@ -116,46 +164,22 @@ func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, s
 		}
 		return
 	}
-	fmt.Fprintf(w, "order: %s\n", parseOrder(order))
-	for _, r := range buildRows(entries, pulls, unlinked, parseOrder(order), prsAll, false, nil, "", summaries, keys, metas) {
-		indent := strings.Repeat("  ", r.depth)
-		switch r.kind {
-		case rowHeader:
-			fmt.Fprintf(w, "%s\n", r.stack)
-		case rowGroup:
-			fmt.Fprintf(w, "  %s\n", r.text)
-		case rowIssue:
-			it := r.e.it
-			label := it.Type
-			if label == "" {
-				label = it.sourceKind()
-			}
-			ghost := ""
-			if it.Ghost {
-				ghost = " (not in your list)"
-			}
-			var needs []string
-			for _, f := range r.needs {
-				needs = append(needs, f.text)
-			}
-			if r.merged {
-				needs = append([]string{"all merged"}, needs...)
-			}
-			if len(needs) > 0 {
-				ghost += " · " + strings.Join(needs, " · ")
-			}
-			fmt.Fprintf(w, "  %s%s [%s] %s: %s (updated %s, desc %dB)%s\n",
-				indent, it.Key, it.Status, label, truncate(it.Summary, 60), relTime(it.Updated), len(it.Description), ghost)
-		case rowPull:
-			var flags []string
-			for _, f := range r.flags {
-				flags = append(flags, f.text)
-			}
-			needs := ""
-			if len(flags) > 0 {
-				needs = " " + strings.Join(flags, " · ")
-			}
-			fmt.Fprintf(w, "  %s↳ %s [%s]%s: %s\n", indent, r.p.Key, strings.ToLower(r.p.State), needs, truncate(r.p.Title, 60))
+	var mine []pull
+	for _, p := range m.pulls {
+		if p.Mine && p.State == prOpen {
+			mine = append(mine, p)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	m.local = localStates(ctx, localRoots(), mine)
+	cancel()
+	fmt.Fprintf(w, "order: %s\n", m.order)
+	m.cursor = -1
+	m.applyFilter()
+	m.cursor = -1
+	for _, r := range m.rows {
+		for _, l := range m.rowLines(r, false, 400) {
+			fmt.Fprintln(w, strings.TrimRight(ansi.Strip(l), " "))
 		}
 	}
 

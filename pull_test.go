@@ -37,10 +37,11 @@ func TestIssueRef(t *testing.T) {
 	}
 }
 
-// TestPullFlags: what a PR needs, and from whom. A thing someone must act
-// on is bad on my PR and a warning on another person's; a review asked of
-// me is bad whoever's PR it is; an approval is not readiness while checks
-// run or something blocks the merge; a draft does not await a review.
+// TestPullFlags: a PR's state, what it needs and the facts. A thing
+// someone must act on is bad on my PR and a warning on another person's; a
+// review asked of me is bad whoever's PR it is; an approval is ready only
+// while nothing blocks it and no check runs; a PR waiting for a review is a
+// warning.
 func TestPullFlags(t *testing.T) {
 	text := func(flags []prFlag) string {
 		var parts []string
@@ -54,31 +55,34 @@ func TestPullFlags(t *testing.T) {
 	for name, tc := range map[string]struct {
 		p     pull
 		base  *pull
-		want  string
+		want  string // the state, then the flags
 		level int
 	}{
 		"merged":                  {pull{State: prMerged, Mine: true, Mergeable: "CONFLICTING"}, nil, "merged", levelNone},
 		"closed":                  {pull{State: prClosed}, nil, "closed", levelNone},
-		"mine with conflicts":     {pull{State: prOpen, Mine: true, Mergeable: "CONFLICTING", ReviewDecision: "APPROVED"}, nil, "conflicts", levelBad},
-		"theirs with conflicts":   {pull{State: prOpen, MergeState: "DIRTY"}, nil, "conflicts", levelWarn},
+		"mine with conflicts":     {pull{State: prOpen, Mine: true, Mergeable: "CONFLICTING", ReviewDecision: "APPROVED"}, nil, "approved · conflicts", levelBad},
+		"theirs with conflicts":   {pull{State: prOpen, MergeState: "DIRTY", Author: "ana"}, nil, "in review · conflicts · by ana", levelWarn},
 		"changes requested":       {pull{State: prOpen, Mine: true, ReviewDecision: "CHANGES_REQUESTED"}, nil, "changes requested", levelBad},
 		"changes without a rule":  {pull{State: prOpen, Mine: true, ChangesRequested: 1, Approvals: 1}, nil, "changes requested", levelBad},
-		"ci failed":               {pull{State: prOpen, Mine: true, Checks: "FAILURE"}, nil, "ci failed", levelBad},
-		"review asked of me":      {pull{State: prOpen, ReviewRequested: true, ReviewDecision: "REVIEW_REQUIRED"}, nil, "review requested · awaiting review", levelBad},
-		"base merged":             {pull{State: prOpen, Mine: true, Base: "x"}, merged, "base merged", levelBad},
-		"behind":                  {pull{State: prOpen, Mine: true, MergeState: "BEHIND", ReviewDecision: "APPROVED"}, nil, "behind base · approved", levelOK},
-		"stacked":                 {pull{State: prOpen, Mine: true, Draft: true}, open, "on #8 · draft", levelNone},
+		"ci failed":               {pull{State: prOpen, Mine: true, Checks: "FAILURE"}, nil, "in review · ci failed", levelBad},
+		"to answer":               {pull{State: prOpen, Mine: true, ToAnswer: true}, nil, "in review · to answer", levelBad},
+		"theirs to answer":        {pull{State: prOpen, ToAnswer: true}, nil, "in review", levelNone},
+		"review asked of me":      {pull{State: prOpen, ReviewRequested: true, ReviewDecision: "REVIEW_REQUIRED"}, nil, "in review · review requested", levelBad},
+		"base merged":             {pull{State: prOpen, Mine: true, Base: "x"}, merged, "in review · base merged", levelBad},
+		"behind, required":        {pull{State: prOpen, Mine: true, Base: "main", MergeState: "BEHIND", ReviewDecision: "APPROVED"}, nil, "approved · behind main", levelOK},
+		"behind, a fact":          {pull{State: prOpen, Mine: true, Base: "master", Behind: 26}, nil, "in review · behind master", levelNone},
+		"stacked":                 {pull{State: prOpen, Mine: true, Draft: true}, open, "draft · stacked on #8", levelNone},
 		"approved":                {pull{State: prOpen, Mine: true, ReviewDecision: "APPROVED", Checks: "SUCCESS"}, nil, "approved", levelOK},
-		"approved, ci pending":    {pull{State: prOpen, Mine: true, ReviewDecision: "APPROVED", Checks: "PENDING"}, nil, "ci pending", levelWarn},
+		"approved, ci pending":    {pull{State: prOpen, Mine: true, ReviewDecision: "APPROVED", Checks: "PENDING"}, nil, "approved · ci pending", levelWarn},
 		"approval without a rule": {pull{State: prOpen, Mine: true, Approvals: 2}, nil, "approved", levelOK},
-		"awaiting review":         {pull{State: prOpen, Mine: true, ReviewDecision: "REVIEW_REQUIRED"}, nil, "awaiting review", levelWarn},
-		"reviewers pending":       {pull{State: prOpen, Mine: true, ReviewRequests: 2}, nil, "awaiting review", levelWarn},
+		"awaiting review":         {pull{State: prOpen, Mine: true, ReviewDecision: "REVIEW_REQUIRED"}, nil, "in review", levelWarn},
+		"reviewers pending":       {pull{State: prOpen, Mine: true, ReviewRequests: 2}, nil, "in review", levelWarn},
 		"draft":                   {pull{State: prOpen, Mine: true, Draft: true, ReviewDecision: "REVIEW_REQUIRED"}, nil, "draft", levelNone},
-		"no rule, no request":     {pull{State: prOpen, Mine: true, Checks: "SUCCESS"}, nil, "", levelNone},
+		"no rule, no request":     {pull{State: prOpen, Mine: true, Checks: "SUCCESS"}, nil, "in review", levelNone},
 	} {
-		got := tc.p.flags(tc.base)
-		if text(got) != tc.want || level(got) != tc.level {
-			t.Errorf("%s: flags = %q (level %d), want %q (level %d)", name, text(got), level(got), tc.want, tc.level)
+		all := append([]prFlag{tc.p.state(tc.base)}, tc.p.flags(tc.base)...)
+		if text(all) != tc.want || tc.p.attention(tc.base) != tc.level {
+			t.Errorf("%s: %q (level %d), want %q (level %d)", name, text(all), tc.p.attention(tc.base), tc.want, tc.level)
 		}
 	}
 }

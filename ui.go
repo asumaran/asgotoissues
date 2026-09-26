@@ -8,6 +8,7 @@ package main
 // popup).
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -24,22 +25,34 @@ import (
 // ---- styles ----
 
 var (
-	stHeader  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	stHeader  = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	stDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	stTitle   = lipgloss.NewStyle().Bold(true)
-	stKey     = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	stTitle   = lipgloss.NewStyle().Bold(true) // the preview's title (the list has no bold)
 	stCount   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	stError   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-	stTodo    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	stTodo    = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
 	stDoing   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	stBlocked = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	stOK      = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	stWarn    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	stBad     = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	stPRKey   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+
+	// stRowSel is the selected row of the list: the selection's background,
+	// never bold (the list has no bold).
+	stRowSel = stSel.Bold(false)
 )
 
+// levelColors color a ticket's key by its depth: pink, blue, peach, mauve
+// (the last two are 256-color: the 16 slots run out).
+var levelColors = []string{"5", "4", "216", "183"}
+
+func keyStyle(depth int) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(levelColors[min(max(depth, 0), len(levelColors)-1)]))
+}
+
 // stateStyle colors an issue by its state: green in progress, red blocked,
-// dim to do.
+// blue to do.
 func stateStyle(state string) lipgloss.Style {
 	switch state {
 	case stateDoing:
@@ -51,45 +64,38 @@ func stateStyle(state string) lipgloss.Style {
 	}
 }
 
-// levelStyle colors what a PR needs: red when it is mine to do, yellow when
-// it waits, green when it is ready, dim otherwise.
-func levelStyle(level int) lipgloss.Style {
-	switch level {
-	case levelBad:
-		return stBad
-	case levelWarn:
-		return stWarn
-	case levelOK:
+// toneStyle is the color of a word of a details line.
+func toneStyle(tone int) lipgloss.Style {
+	switch tone {
+	case toneGreen:
 		return stOK
+	case toneYellow:
+		return stWarn
+	case toneRed:
+		return stBad
+	case toneBlue:
+		return stTodo
 	}
 	return stDim
 }
 
-// flagsLine is a PR's flags, each in its color, joined for the preview.
+// flagsLine is a PR's words, each in its color, joined for the preview.
 // base is the style they are drawn over.
 func flagsLine(flags []prFlag, base lipgloss.Style) string {
 	parts := make([]string, len(flags))
 	for i, f := range flags {
-		parts[i] = base.Foreground(levelStyle(f.level).GetForeground()).Render(f.text)
+		parts[i] = base.Foreground(toneStyle(f.tone).GetForeground()).Render(f.text)
 	}
 	return strings.Join(parts, base.Foreground(stDim.GetForeground()).Render(" · "))
 }
 
-// flagTexts is what the flags say, for a line in one tone.
-func flagTexts(flags []prFlag) []string {
-	out := make([]string, len(flags))
-	for i, f := range flags {
-		out[i] = f.text
-	}
-	return out
-}
-
-// The list is two tones, so the eye scans titles: the first line of a row is
-// plain, the details under it are dim. Over the selection's background the
-// details are a lighter grey, so they can still be read there.
+// The list: a row's first line is its key, in its level's color, and its
+// title, faint; its details line is dim, with the words that mean something
+// in their colors, faint. Over the selection's background the dim words are
+// a lighter grey (color 7), so they can still be read there.
 var (
 	stDetail    = stDim
-	stDetailSel = stSel.Foreground(lipgloss.Color("7")).Bold(false)
+	stDetailSel = stRowSel.Foreground(lipgloss.Color("7"))
 )
 
 // ---- key bindings ----
@@ -104,7 +110,11 @@ type keyMap struct {
 	Grow     key.Binding
 	Copy     key.Binding
 	Order    key.Binding
+	Show     key.Binding
+	Group    key.Binding
 	Fold     key.Binding
+	Shallow  key.Binding // shift+tab: the tree one level less deep
+	Deeper   key.Binding // tab: one level more
 	Filter   key.Binding
 	Help     key.Binding
 }
@@ -123,7 +133,8 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Filter, k.PrevUp, k.Shrink},
 		{k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
-		{k.Select, k.Copy, k.Order, k.Fold},
+		{k.Select, k.Copy, k.Order, k.Show, k.Group},
+		{k.Fold, k.Shallow},
 		{k.Help, k.Quit},
 	}
 }
@@ -139,8 +150,12 @@ func defaultKeys() keyMap {
 		Grow:     key.NewBinding(key.WithKeys("shift+right")),
 		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the key")),
 		Order:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "order")),
+		Show:     key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "show")),
+		Group:    key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "group")),
 		// space folds only while the filter is empty; otherwise it is text.
-		Fold: key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "fold/unfold (empty filter)")),
+		Fold:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "fold/unfold (empty filter)")),
+		Shallow: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab/tab", "fold/unfold a level")),
+		Deeper:  key.NewBinding(key.WithKeys("tab")),
 		// Help-only entry: a binding without keys is disabled and the help
 		// bubble would skip it. Nothing ever matches against it.
 		Filter: key.NewBinding(key.WithKeys("type"), key.WithHelp("type", "filter")),
@@ -163,12 +178,21 @@ type model struct {
 	cache     issueCache
 
 	// options
-	order      orderMode
-	prs        prsMode
-	rowsM      rowsMode
-	hideMerged bool // leave out the merged PRs and the tickets with nothing left under them
+	order  orderMode
+	prs    prsMode
+	show   showMode
+	group  groupMode
+	rowsM  rowsMode
+	titles titlesMode
 
-	collapsed map[string]bool // the tickets folded by hand, by URL, for this run
+	collapsed map[string]bool // the rows folded by hand, by foldKey, for this run
+	depthNow  int             // the level the tree was folded to with tab/shift+tab, 0 for none
+
+	// what the list says besides the trackers
+	summ      summaries             // the short titles (summary.go)
+	summTried map[string]bool       // the items sent this run, so a missing answer is not asked for again
+	summBusy  bool                  // a call is running
+	local     map[string]localState // my PRs' checkouts, by URL (local.go)
 
 	// background refresh
 	pending    int // sources still fetching
@@ -212,11 +236,17 @@ func newModel(stacks []stack, cache issueCache, stale bool) model {
 		sources:      sourcesOf(stacks),
 		cache:        cache,
 		refreshing:   stale,
+		cursor:       -1, // the first ticket, not the stack's header (applyFilter)
 		order:        parseOrder(loadSetting(stateDir(), "order")),
 		prs:          parsePrs(loadSetting(stateDir(), "prs")),
+		show:         parseShow(loadSetting(stateDir(), "show"), loadSetting(stateDir(), "merged")),
+		group:        parseGroup(loadSetting(stateDir(), "group")),
 		rowsM:        parseRows(loadSetting(stateDir(), "rows")),
-		hideMerged:   loadSetting(stateDir(), "merged") == "hide",
+		titles:       parseTitles(loadSetting(stateDir(), "titles")),
 		collapsed:    map[string]bool{},
+		summ:         loadSummaries(),
+		summTried:    map[string]bool{},
+		local:        map[string]localState{},
 		ti:           newFilterInput("asgotoissues", "Search by title, key, status, repo, PR…"),
 		listVP:       viewport.New(viewport.WithWidth(50), viewport.WithHeight(20)),
 		prevVP:       viewport.New(viewport.WithWidth(40), viewport.WithHeight(17)),
@@ -244,6 +274,32 @@ func (m *model) currentRow() *row {
 		return &m.rows[m.cursor]
 	}
 	return nil
+}
+
+// titleOf is the title a ticket's row shows: its short title when there is
+// one and the option wants it, else the tracker's.
+func (m *model) titleOf(e *entry) string {
+	if m.titles == titlesShort {
+		if s := m.summ[e.it.URL].Text; s != "" {
+			return s
+		}
+	}
+	return e.it.Summary
+}
+
+// pullTitle is titleOf for a PR.
+func (m *model) pullTitle(p *pull) string {
+	if m.titles == titlesShort {
+		if s := m.summ[p.URL].Text; s != "" {
+			return s
+		}
+	}
+	return p.Title
+}
+
+// opts is how the rows are built now.
+func (m *model) opts() treeOpts {
+	return treeOpts{order: m.order, prs: m.prs, show: m.show, group: m.group, collapsed: m.collapsed}
 }
 
 // innerW is the width inside the frame's sides.
@@ -277,7 +333,7 @@ func (m *model) resize() {
 func (m *model) syncPreviewHeight() {
 	hh := 0
 	if r := m.currentRow(); r != nil {
-		hh = lipgloss.Height(headerOf(r, m.prevW())) + 1 // and the blank line under it
+		hh = lipgloss.Height(m.headerOf(r, m.prevW())) + 1 // and the blank line under it
 	}
 	m.prevVP.SetHeight(max(1, m.bodyH()-hh))
 }
@@ -297,12 +353,12 @@ func (m *model) setEntries(issues []issue, pulls []pull) {
 	m.entries = buildEntries(issues)
 	m.pulls = pulls
 	m.unlinked = linkPulls(m.entries, m.pulls)
-	m.summaries, m.keysC, m.metas = corpora(m.entries)
+	m.summaries, m.keysC, m.metas = corpora(m.entries, m.titleOf)
 }
 
 func (m *model) applyFilter() {
 	q := strings.TrimSpace(m.ti.Value())
-	m.rows = buildRows(m.entries, m.pulls, m.unlinked, m.order, m.prs, m.hideMerged, m.collapsed, q, m.summaries, m.keysC, m.metas)
+	m.rows = buildRows(m.entries, m.pulls, m.unlinked, m.opts(), q, m.summaries, m.keysC, m.metas)
 	if hasTerms(q) {
 		m.cursor = firstHit(m.rows) // ranked: the best match is the first hit
 		return
@@ -327,38 +383,86 @@ func (m *model) keepCursorOn(id string) {
 	m.cursor = firstIssue(m.rows)
 }
 
-// fold folds or unfolds the ticket under the cursor (a PR's ticket when the
-// cursor is on a PR): its PRs and children leave the list or come back, and
-// the cursor sits on the ticket. A ticket with nothing under it says so.
+// fold folds or unfolds the row under the cursor: a ticket, a stack, the
+// group of PRs without a ticket, a phase section (on a PR, its ticket in
+// the tree and its section by phase). What hangs from it leaves the list or
+// comes back, and the cursor sits on it. A row with nothing under it says
+// so.
 func (m *model) fold() tea.Cmd {
 	r := m.currentRow()
 	if r == nil {
 		return m.flash.fail("nothing to fold")
 	}
-	url := r.url()
+	target := m.cursor
 	if r.kind == rowPull {
-		url = r.parent
-	}
-	var target *row
-	for i := range m.rows {
-		if m.rows[i].kind == rowIssue && m.rows[i].e.it.URL == url {
-			target = &m.rows[i]
-			break
+		target = -1
+		for i := m.cursor - 1; i >= 0; i-- {
+			k := m.rows[i].kind
+			if m.group == groupTree && (k == rowIssue && m.rows[i].e.it.URL == r.parent || k == rowGroup) ||
+				m.group == groupPhase && k == rowSection {
+				target = i
+				break
+			}
 		}
 	}
-	if target == nil || !target.kids {
+	if target < 0 || !m.rows[target].kids {
 		return m.flash.fail("nothing to fold")
 	}
-	id := target.id()
-	if m.collapsed[url] {
-		delete(m.collapsed, url)
+	key := foldKey(m.rows[target])
+	id := m.rows[target].id()
+	if m.collapsed[key] {
+		delete(m.collapsed, key)
 	} else {
-		m.collapsed[url] = true
+		m.collapsed[key] = true
 	}
 	m.applyFilter()
 	m.keepCursorOn(id)
 	m.renderList()
 	return m.updatePreview()
+}
+
+// foldTo folds the tree to one level less deep (shallower) or one more:
+// all, then the deepest level, down to the roots alone, and back. It
+// replaces the folds made by hand (a stack stays folded). With a query, or
+// by phase, it does nothing: a search never hides a hit.
+func (m *model) foldTo(shallower bool) tea.Cmd {
+	if hasTerms(m.ti.Value()) || m.group != groupTree {
+		return nil
+	}
+	open := treeOpts{order: m.order, prs: m.prs, show: m.show, group: groupTree}
+	deep := deepest(buildTree(m.entries, m.pulls, m.unlinked, open, nil))
+	if deep == 0 {
+		return m.flash.fail("nothing to fold")
+	}
+	lvl := m.depthNow
+	switch {
+	case shallower && lvl == 0:
+		lvl = deep
+	case shallower:
+		lvl = max(1, lvl-1)
+	case lvl != 0:
+		lvl++
+		if lvl > deep {
+			lvl = 0
+		}
+	}
+	m.depthNow = lvl
+	cur := m.currentID()
+	folds := foldLevel(buildTree(m.entries, m.pulls, m.unlinked, open, nil), lvl)
+	for k := range m.collapsed {
+		if strings.HasPrefix(k, "stack:") {
+			folds[k] = true
+		}
+	}
+	m.collapsed = folds
+	m.applyFilter()
+	m.keepCursorOn(cur)
+	m.renderList()
+	msg := "all levels"
+	if lvl > 0 {
+		msg = "level " + strconv.Itoa(lvl)
+	}
+	return tea.Batch(m.flash.set(msg), m.updatePreview())
 }
 
 // currentID is the identity of the row under the cursor, "" without one.
@@ -390,7 +494,8 @@ func parseRows(s string) rowsMode {
 }
 
 // options are the settings the panel offers: the order of every level of
-// the tree, which PR rows show, and how many lines a row takes.
+// the tree, which PR rows show, what the list lists and how, how many lines
+// a row takes, and which titles it shows.
 func (m *model) options() []option {
 	order := option{id: "order", label: "Order", key: "^s"}
 	for i, o := range orderModes {
@@ -406,20 +511,38 @@ func (m *model) options() []option {
 			prs.cur = i
 		}
 	}
+	show := option{id: "show", label: "Show", key: "^t"}
+	for i, v := range showModes {
+		show.values = append(show.values, string(v))
+		if v == m.show {
+			show.cur = i
+		}
+	}
+	group := option{id: "group", label: "Group", key: "^g"}
+	for i, v := range groupModes {
+		group.values = append(group.values, string(v))
+		if v == m.group {
+			group.cur = i
+		}
+	}
 	rows := option{id: "rows", label: "Rows", values: []string{"two lines", "one line"}}
 	if m.rowsM == rowsOne {
 		rows.cur = 1
 	}
-	merged := option{id: "merged", label: "Merged", values: []string{"show", "hide"}}
-	if m.hideMerged {
-		merged.cur = 1
+	titles := option{id: "titles", label: "Titles"}
+	for i, v := range titlesModes {
+		titles.values = append(titles.values, string(v))
+		if v == m.titles {
+			titles.cur = i
+		}
 	}
-	return []option{order, prs, rows, merged}
+	return []option{order, prs, show, group, rows, titles}
 }
 
 // setOption changes a setting, remembers it and rebuilds the list around the
 // row the cursor was on.
 func (m *model) setOption(id string, v int) tea.Cmd {
+	var more tea.Cmd
 	switch id {
 	case "order":
 		m.order = orderModes[max(0, min(v, len(orderModes)-1))]
@@ -427,12 +550,20 @@ func (m *model) setOption(id string, v int) tea.Cmd {
 	case "prs":
 		m.prs = prsModes[max(0, min(v, len(prsModes)-1))]
 		saveSetting(stateDir(), "prs", string(m.prs))
+	case "show":
+		m.show = showModes[max(0, min(v, len(showModes)-1))]
+		saveSetting(stateDir(), "show", string(m.show))
+	case "group":
+		m.group = groupModes[max(0, min(v, len(groupModes)-1))]
+		saveSetting(stateDir(), "group", string(m.group))
 	case "rows":
 		m.rowsM = rowsModes[max(0, min(v, len(rowsModes)-1))]
 		saveSetting(stateDir(), "rows", string(m.rowsM))
-	case "merged":
-		m.hideMerged = v == 1
-		saveSetting(stateDir(), "merged", m.optionValue("merged"))
+	case "titles":
+		m.titles = titlesModes[max(0, min(v, len(titlesModes)-1))]
+		saveSetting(stateDir(), "titles", string(m.titles))
+		m.summaries, m.keysC, m.metas = corpora(m.entries, m.titleOf)
+		more = m.summarizeNext()
 	default:
 		return nil
 	}
@@ -441,29 +572,67 @@ func (m *model) setOption(id string, v int) tea.Cmd {
 	m.applyFilter()
 	m.keepCursorOn(cur)
 	m.renderList()
-	return tea.Batch(m.flash.set(id+": "+m.optionValue(id)), m.updatePreview())
+	return tea.Batch(m.flash.set(id+": "+m.optionValue(id)), m.updatePreview(), more)
 }
 
 func (m *model) optionValue(id string) string {
 	switch id {
 	case "prs":
 		return string(m.prs)
+	case "show":
+		return string(m.show)
+	case "group":
+		return string(m.group)
 	case "rows":
 		return string(m.rowsM) + " line(s)"
-	case "merged":
-		if m.hideMerged {
-			return "hide"
-		}
-		return "show"
+	case "titles":
+		return string(m.titles)
 	}
 	return string(m.order)
 }
 
-// syncHelp names, on the order key, the order the next press gives.
+// syncHelp names, on the keys that cycle an option, the value the next
+// press gives.
 func (m *model) syncHelp() {
-	next := orderModes[nextValue(m.options(), "order")]
-	m.keys.Order.SetHelp("^s", "order by "+string(next))
+	opts := m.options()
+	m.keys.Order.SetHelp("^s", "order by "+string(orderModes[nextValue(opts, "order")]))
+	m.keys.Show.SetHelp("^t", "show "+string(showModes[nextValue(opts, "show")]))
+	m.keys.Group.SetHelp("^g", "group by "+string(groupModes[nextValue(opts, "group")]))
 }
+
+// summarizeNext starts the next call of short titles, when the option wants
+// them and something is missing; nothing while one runs.
+func (m *model) summarizeNext() tea.Cmd {
+	if m.titles != titlesShort || summarizerOff || m.summBusy {
+		return nil
+	}
+	for _, batch := range pendingSummaries(m.entries, m.summ) {
+		var send []summaryItem
+		fresh := false
+		for _, it := range batch {
+			if it.Summary == "" && m.summTried[it.ID] {
+				continue
+			}
+			if it.Summary == "" {
+				fresh = true
+			}
+			send = append(send, it)
+		}
+		if !fresh {
+			continue
+		}
+		for _, it := range send {
+			m.summTried[it.ID] = true
+		}
+		m.summBusy = true
+		return summarizeCmd(send)
+	}
+	return nil
+}
+
+// summarizeStartMsg asks Update to start the short titles (Init cannot keep
+// what it marks).
+type summarizeStartMsg struct{}
 
 // ---- list rendering ----
 
@@ -490,7 +659,7 @@ func (m *model) renderList() {
 // with two-line rows, its details under it.
 func (m *model) rowLines(r row, selected bool, width int) []string {
 	first := m.rowLine(r, selected, width)
-	if m.rowsM != rowsTwo || !r.selectable() {
+	if m.rowsM != rowsTwo || !r.opens() {
 		return []string{first}
 	}
 	return []string{first, m.detailLine(r, selected, width)}
@@ -504,92 +673,211 @@ func (m *model) lineEnd(i int) int {
 	return m.lines
 }
 
-// rowLine is the first line of a row cut to width; the selected one is
-// padded to it, so the highlight spans the list. A selectable row starts
-// with the gutter (the cursor's mark), then its indent, then its key and,
-// one space on, its title, which comes last, so it is what a narrow list
-// cuts.
-func (m *model) rowLine(r row, selected bool, width int) string {
-	switch r.kind {
-	case rowHeader:
-		return truncate(stHeader.Render(r.stack), width)
-	case rowGroup:
-		return truncate(stDim.Render("  "+r.text), width)
-	case rowPull:
-		return m.pullLine(r, selected, width)
+// The tree's columns: a ticket at depth d has its fold arrow at arrowCol(d)
+// and its key at keyCol(d); what it holds (its details, its PRs' keys, its
+// sub-tickets' keys) starts 4 cells past its key, and its PR bullets and its
+// sub-tickets' arrows 2 cells before that.
+func arrowCol(d int) int { return 1 + 4*d }
+func keyCol(d int) int   { return 3 + 4*d }
+
+// arrow is the fold mark of a row that can fold: full-size triangles, ▶
+// written as text so no terminal draws it as an emoji.
+func arrow(folded bool) string {
+	if folded {
+		return "▶︎"
 	}
-	it := r.e.it
-	indent := strings.Repeat(" ", r.col)
-	// The first line is plain, the key included: the state is said in words,
-	// on the second line or, with one-line rows, right after the key. A ghost
-	// or a context row is dim: it is not one of mine, or not a hit.
-	keyStyle := lipgloss.NewStyle()
-	if r.e.it.Ghost || r.ctx {
-		keyStyle = stDim
-	}
-	status := func(base lipgloss.Style) string {
-		if m.rowsM == rowsTwo {
-			return ""
-		}
-		return base.Render("[" + it.Status + "] ")
-	}
-	// A folded ticket carries its mark in the gutter, so the key stays put.
-	gutter := "  "
-	switch {
-	case selected && r.collapsed:
-		gutter = "▌▸"
-	case selected:
-		gutter = "▌ "
-	case r.collapsed:
-		gutter = " ▸"
-	}
-	if selected {
-		return selPad(truncate(stSel.Render(gutter+indent+it.Key+" ")+status(stSel)+highlight(it.Summary, r.idx, stSel), width), width)
-	}
-	title := it.Summary
-	switch {
-	case r.match && len(r.idx) > 0:
-		title = highlight(title, r.idx, lipgloss.NewStyle())
-	case it.Ghost || r.ctx:
-		title = stDim.Render(title)
-	}
-	return truncate(gutter+indent+keyStyle.Render(it.Key)+" "+status(lipgloss.NewStyle())+title, width)
+	return "▼"
 }
 
-// pullLine is a PR's first line: the gutter, the indent and, with two-line
-// rows, `↳ repo#N title` (the rest goes under the title); with one-line
-// rows `↳ repo#N`, its flags and its title.
-func (m *model) pullLine(r row, selected bool, width int) string {
-	indent := strings.Repeat(" ", r.col)
+// lead is what a row's line has before its text: the gutter (the cursor's
+// mark), the guides, the branch, the fold arrow or the PR's bullet, as
+// cells. title says which of the row's two lines it is.
+func (m *model) lead(r row, title bool) []string {
+	var cells []string
+	d := r.depth
+	switch {
+	case r.kind == rowPull && m.group == groupPhase:
+		cells = make([]string, 2)
+	case r.kind == rowIssue && m.group == groupPhase:
+		cells = make([]string, 2)
+	case r.kind == rowPull:
+		cells = make([]string, keyCol(d))
+	case title:
+		cells = make([]string, keyCol(d))
+	default:
+		cells = make([]string, keyCol(d)+4)
+	}
+	for i := range cells {
+		cells[i] = " "
+	}
+	set := func(i int, c string) {
+		if i >= 0 && i < len(cells) {
+			cells[i] = c
+		}
+	}
+	if m.group == groupPhase {
+		if !title {
+			cells = append(cells, "    ")
+		}
+		return cells
+	}
+	for j, on := range r.rails {
+		if on {
+			set(arrowCol(j), "│")
+		}
+	}
+	switch r.kind {
+	case rowPull:
+		if title {
+			set(arrowCol(d), "○")
+		}
+	case rowIssue:
+		if title {
+			if d >= 1 {
+				at := arrowCol(d - 1)
+				set(at, map[bool]string{true: "└", false: "├"}[r.lastSib])
+				end := arrowCol(d) - 1
+				if !r.kids {
+					end = arrowCol(d) + 1 // a leaf's branch runs through the arrow's place
+				}
+				for i := at + 1; i < end; i++ {
+					set(i, "─")
+				}
+			}
+			if r.kids {
+				set(arrowCol(d), arrow(r.collapsed))
+			}
+		} else {
+			if d >= 1 && !r.lastSib {
+				set(arrowCol(d-1), "│")
+			}
+			if r.kidRail {
+				set(arrowCol(d), "│")
+			}
+		}
+	}
+	return cells
+}
+
+// drawLead renders the lead: the gutter's mark on the selected row, the
+// guides, arrows and bullets dim (lighter over the selection).
+func drawLead(cells []string, selected bool) string {
+	base, guide := lipgloss.NewStyle(), stDim
+	if selected {
+		base, guide = stRowSel, stDetailSel
+	}
+	var b strings.Builder
+	for i, c := range cells {
+		switch {
+		case i == 0 && selected:
+			b.WriteString(base.Render("▌"))
+		case c == " " || c == "    ":
+			b.WriteString(base.Render(c))
+		default:
+			b.WriteString(guide.Render(c))
+		}
+	}
+	return b.String()
+}
+
+// rowLine is the first line of a row cut to width; the selected one is
+// padded to it, so the highlight spans the list. The title comes last, so
+// it is what a narrow list cuts.
+func (m *model) rowLine(r row, selected bool, width int) string {
 	base := lipgloss.NewStyle()
 	if selected {
-		base = stSel
+		base = stRowSel
+	}
+	dim := stDim
+	if selected {
+		dim = stDetailSel
 	}
 	var line string
-	if m.rowsM == rowsTwo {
-		line = base.Render(indent+"↳ ") + m.pullKeyStyle(r, base).Render(r.p.Key) + base.Render(" "+r.p.Title)
-	} else {
-		// One line: the flags between the key and the title, dim, so the
-		// line still reads as key and title.
-		detail := stDetail
-		if selected {
-			detail = stDetailSel
+	switch r.kind {
+	case rowHeader:
+		line = dim.Render(arrow(r.collapsed)) + base.Render(" ") + base.Foreground(stHeader.GetForeground()).Render(r.stack)
+	case rowGroup:
+		line = base.Render(" ") + dim.Render(arrow(r.collapsed)) + base.Render(" ") + dim.Render(r.text)
+	case rowSection:
+		label := "── " + r.text + " (" + strconv.Itoa(r.count) + ") "
+		line = base.Render(" ") + dim.Render(arrow(r.collapsed)) + base.Render(" ") + dim.Render(label+strings.Repeat("─", max(4, 40-len(r.text))))
+	case rowPull:
+		line = drawLead(m.lead(r, true), selected) + m.pathOf(r, base) + m.pullKeyStyle(r, onBase(stPRKey, selected)).Render(strings.ToLower(r.p.Key))
+		if m.rowsM == rowsOne {
+			line += base.Render(" ") + m.detailWords(r, selected)
 		}
-		line = base.Render(indent+"↳ ") + m.pullKeyStyle(r, base).Render(r.p.Key)
-		if len(r.flags) > 0 {
-			line += base.Render("  ") + detail.Render(strings.Join(flagTexts(r.flags), " · "))
+		line += base.Render(" ") + titleStyle(base, r.ctx).Render(m.pullTitle(r.p))
+	default:
+		it := r.e.it
+		ks := keyStyle(r.depth)
+		if m.group == groupPhase {
+			ks = keyStyle(len(r.path))
 		}
-		line += base.Render("  " + r.p.Title)
+		if r.ctx {
+			ks = stDim
+		}
+		line = drawLead(m.lead(r, true), selected) + m.pathOf(r, base) + onBase(ks, selected).Render(strings.ToLower(it.Key))
+		if m.rowsM == rowsOne {
+			line += base.Render(" ") + m.detailWords(r, selected)
+		}
+		title := m.titleOf(r.e)
+		ts := titleStyle(base, r.ctx)
+		if r.match && len(r.idx) > 0 {
+			line += base.Render(" ") + highlight(title, r.idx, ts)
+		} else {
+			line += base.Render(" ") + ts.Render(title)
+		}
 	}
 	if selected {
-		return selPad(truncate(stSel.Render("▌ ")+line, width), width)
+		return selPadRow(truncate(line, width), width)
 	}
-	return truncate("  "+line, width)
+	return truncate(line, width)
 }
 
-// pullKeyStyle is the style of a PR's key: plain, like the line, or the
-// match style when the query is in it or in the branch, so the reader sees
-// which PR matched.
+// titleStyle is a title's look: the foreground, faint, so the key stands
+// out over it; dim for a row listed only to lead to a hit.
+func titleStyle(base lipgloss.Style, ctx bool) lipgloss.Style {
+	if ctx {
+		return base.Foreground(stDim.GetForeground())
+	}
+	return base.Faint(true)
+}
+
+// onBase is a colored style as the row draws it: over the selection's
+// background on the selected row.
+func onBase(st lipgloss.Style, selected bool) lipgloss.Style {
+	if selected {
+		return stRowSel.Foreground(st.GetForeground())
+	}
+	return st
+}
+
+// selPadRow is selPad without bold: the list has none.
+func selPadRow(s string, width int) string {
+	if n := width - ansi.StringWidth(s); n > 0 {
+		s += stRowSel.Render(strings.Repeat(" ", n))
+	}
+	return s
+}
+
+// pathOf is, in the phase view, the keys of the tickets a row hangs from,
+// each in its level's color, joined by ›, before the row's own key.
+func (m *model) pathOf(r row, base lipgloss.Style) string {
+	if m.group != groupPhase || len(r.path) == 0 {
+		return ""
+	}
+	selected := base.GetBackground() != lipgloss.NoColor{}
+	var b strings.Builder
+	for _, k := range r.path {
+		b.WriteString(onBase(keyStyle(k.depth), selected).Render(strings.ToLower(k.key)))
+		b.WriteString(titleStyle(base, false).Render(" › "))
+	}
+	return b.String()
+}
+
+// pullKeyStyle is the style of a PR's key: its own color, or the match
+// style when the query is in it or in the branch, so the reader sees which
+// PR matched.
 func (m *model) pullKeyStyle(r row, base lipgloss.Style) lipgloss.Style {
 	if q := strings.ToLower(strings.TrimSpace(m.ti.Value())); hasTerms(q) &&
 		(strings.Contains(strings.ToLower(r.p.Key), q) || strings.Contains(strings.ToLower(r.p.Head), q)) {
@@ -598,55 +886,96 @@ func (m *model) pullKeyStyle(r row, base lipgloss.Style) lipgloss.Style {
 	return base
 }
 
-// detailLine is the second line of a ticket or a PR with two-line rows,
-// aligned under the title (one space past the key) and in one dim tone, so
-// the titles stay what the eye scans: a ticket's status, type, last update,
-// how many PRs it has and what they and its descendants' need, in words
-// (or that it is not in my list); a PR's state, flags, author when it is
-// not me, and last update. Under the selection the tone is a lighter grey,
-// readable over its background.
+// detailLine is the second line of a ticket or a PR: its words, dim, with
+// the ones that mean something in their colors, faint. It starts 4 cells
+// past a ticket's key, under a PR's key.
 func (m *model) detailLine(r row, selected bool, width int) string {
-	detail, gutter := stDetail, "  "
+	line := drawLead(m.lead(r, false), selected) + m.detailWords(r, selected)
 	if selected {
-		detail, gutter = stDetailSel, stSel.Render("▌ ")
-	}
-	lead := strings.Repeat(" ", r.col)
-	var parts []string
-	if r.kind == rowPull {
-		p := r.p
-		lead += "  " + strings.Repeat(" ", ansi.StringWidth(p.Key)+1) // under the title, past "↳ " and the key
-		if p.State == prOpen && !p.Draft {
-			parts = append(parts, "open")
-		}
-		parts = append(parts, flagTexts(r.flags)...)
-		if !p.Mine && p.Author != "" {
-			parts = append(parts, "by "+p.Author)
-		}
-		parts = append(parts, relTime(p.Updated))
-	} else {
-		it := r.e.it
-		lead += strings.Repeat(" ", ansi.StringWidth(it.Key)+1)
-		parts = append(parts, it.Status)
-		if it.Type != "" {
-			parts = append(parts, it.Type)
-		}
-		parts = append(parts, "updated "+relTime(it.Updated))
-		if it.Ghost {
-			parts = append(parts, "not in your list")
-		}
-		if len(r.e.pulls) > 0 {
-			parts = append(parts, plural(len(r.e.pulls), "PR"))
-		}
-		if r.merged {
-			parts = append(parts, "all merged")
-		}
-		parts = append(parts, flagTexts(r.needs)...)
-	}
-	line := gutter + detail.Render(lead+strings.Join(parts, " · "))
-	if selected {
-		return selPad(truncate(line, width), width)
+		return selPadRow(truncate(line, width), width)
 	}
 	return truncate(line, width)
+}
+
+// detailWords is what a details line says, most important first and the age
+// always last. A ticket: its status, `no PR` when it goes on without one,
+// `not yours` for a ghost. A PR: its state, what it needs, the counters of
+// its checkout, the status of its ticket (by phase), the facts.
+func (m *model) detailWords(r row, selected bool) string {
+	dim := stDetail
+	if selected {
+		dim = stDetailSel
+	}
+	color := func(st lipgloss.Style) lipgloss.Style {
+		return onBase(st, selected).Faint(true)
+	}
+	var parts []string
+	word := func(f prFlag) {
+		if f.tone == toneDim {
+			parts = append(parts, dim.Render(f.text))
+			return
+		}
+		parts = append(parts, color(toneStyle(f.tone)).Render(f.text))
+	}
+	if r.kind == rowPull {
+		word(r.state)
+		i := 0
+		for ; i < r.needN; i++ { // what it needs; the facts come after the checkout
+			word(r.flags[i])
+		}
+		if st, ok := m.local[r.p.URL]; ok {
+			var cs []string
+			for _, c := range localFlags(st) {
+				cs = append(cs, color(lipgloss.NewStyle().Foreground(lipgloss.Color(c.color))).Render(c.text))
+			}
+			parts = append(parts, strings.Join(cs, dim.Render(" ")))
+		}
+		if m.group == groupPhase && r.pe != nil {
+			parts = append(parts, color(stateStyle(r.pe.it.state())).Render(statusWord(r.pe.it)))
+		}
+		for ; i < len(r.flags); i++ {
+			word(r.flags[i])
+		}
+	} else {
+		it := r.e.it
+		parts = append(parts, color(stateStyle(it.state())).Render(statusWord(it)))
+		if r.noPR {
+			parts = append(parts, dim.Render("no PR"))
+		}
+		if it.Ghost {
+			parts = append(parts, dim.Render("not yours"))
+		}
+	}
+	parts = append(parts, dim.Render(ageWord(r.last)))
+	return strings.Join(parts, dim.Render(" · "))
+}
+
+// statusWord is a ticket's status as the details line says it, in lower
+// case: the tracker's own status, or, for a GitHub issue (which has no
+// workflow), the one its labels give (in progress, blocked), else open.
+func statusWord(it issue) string {
+	if it.Source == kindGitHub {
+		switch it.state() {
+		case stateDoing:
+			return "in progress"
+		case stateBlocked:
+			return "blocked"
+		}
+		return "open"
+	}
+	return strings.ToLower(it.Status)
+}
+
+// ageWord is a row's last activity: today, else how long ago (3d, 2w).
+func ageWord(t time.Time) string {
+	if t.IsZero() {
+		return "?"
+	}
+	now := time.Now()
+	if y, mo, d := t.Local().Date(); y == now.Year() && mo == now.Month() && d == now.Day() {
+		return "today"
+	}
+	return compactAge(t, now)
 }
 
 func (m *model) ensureVisible() {
@@ -664,7 +993,7 @@ func (m *model) ensureVisible() {
 func (m *model) updatePreview() tea.Cmd {
 	r := m.currentRow()
 	m.syncPreviewHeight()
-	if r == nil {
+	if r == nil || !r.opens() {
 		m.clearPreview()
 		return nil
 	}
@@ -703,13 +1032,14 @@ func (m *model) finishRefresh() tea.Cmd {
 	m.applyFilter()
 	m.keepCursorOn(cur)
 	m.renderList()
-	return m.updatePreview()
+	return tea.Batch(m.updatePreview(), localCmd(m.pulls), m.summarizeNext())
 }
 
 // ---- bubbletea ----
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textinput.Blink, tea.RequestBackgroundColor}
+	cmds := []tea.Cmd{textinput.Blink, tea.RequestBackgroundColor, localCmd(m.pulls),
+		func() tea.Msg { return summarizeStartMsg{} }}
 	if m.refreshing {
 		for _, s := range m.sources {
 			cmds = append(cmds, fetchSourceCmd(s))
@@ -763,6 +1093,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case previewMsg:
 		m.handlePreview(msg)
 		return m, nil
+
+	case localMsg:
+		m.local = msg.states
+		m.renderList()
+		return m, nil
+
+	case summarizeStartMsg:
+		return m, m.summarizeNext()
+
+	case summariesMsg:
+		m.summBusy = false
+		if msg.err != nil {
+			if !errors.Is(msg.err, errNoSummarizer) {
+				m.netErr = "short titles: " + msg.err.Error()
+			}
+			return m, nil
+		}
+		if len(msg.written) == 0 {
+			return m, m.summarizeNext()
+		}
+		for k, v := range msg.written {
+			m.summ[k] = v
+		}
+		settleHashes(m.entries, m.summ, msg.written)
+		saveSummaries(m.summ)
+		cur := m.currentID()
+		m.summaries, m.keysC, m.metas = corpora(m.entries, m.titleOf)
+		m.applyFilter()
+		m.keepCursorOn(cur)
+		m.renderList()
+		return m, m.summarizeNext()
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -820,13 +1181,13 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Select):
-		if r := m.currentRow(); r != nil {
+		if r := m.currentRow(); r != nil && r.opens() {
 			m.openURL = r.url()
 			return m, tea.Quit
 		}
 		return m, m.flash.fail("nothing to open")
 	case key.Matches(msg, m.keys.Copy):
-		if r := m.currentRow(); r != nil {
+		if r := m.currentRow(); r != nil && r.opens() {
 			if r.kind == rowPull {
 				return m, copyCmd("asgotoissues", "", r.p.URL)
 			}
@@ -835,6 +1196,14 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, copyCmd("asgotoissues", "", "")
 	case key.Matches(msg, m.keys.Order):
 		return m, m.setOption("order", nextValue(m.options(), "order"))
+	case key.Matches(msg, m.keys.Show):
+		return m, m.setOption("show", nextValue(m.options(), "show"))
+	case key.Matches(msg, m.keys.Group):
+		return m, m.setOption("group", nextValue(m.options(), "group"))
+	case key.Matches(msg, m.keys.Shallow):
+		return m, m.foldTo(true)
+	case key.Matches(msg, m.keys.Deeper):
+		return m, m.foldTo(false)
 	case key.Matches(msg, m.keys.Fold) && m.ti.Value() == "":
 		return m, m.fold()
 	case m.keys.Nav.matches(msg):
@@ -971,5 +1340,5 @@ func (m model) rightColumn() string {
 	if r == nil {
 		return "" // the list says why it is empty (leftColumn)
 	}
-	return headerOf(r, w) + "\n\n" + m.prevVP.View()
+	return m.headerOf(r, w) + "\n\n" + m.prevVP.View()
 }

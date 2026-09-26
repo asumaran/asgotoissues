@@ -51,34 +51,83 @@ func renderPreviewCmd(key, md string, width int, style string) tea.Cmd {
 }
 
 // headerOf is the header of a row's preview.
-func headerOf(r *row, width int) string {
-	if r.kind == rowPull {
-		return pullHeader(r.p, r.flags, width)
+func (m *model) headerOf(r *row, width int) string {
+	switch r.kind {
+	case rowPull:
+		return pullHeader(r.p, append([]prFlag{r.state}, r.flags...), m.summ[r.p.URL].Text, width)
+	case rowIssue:
+		return previewHeader(r.e.it, m.summ[r.e.it.URL].Text, width)
 	}
-	return previewHeader(r.e.it, r.merged, width)
+	return m.stackHeader(r, width)
+}
+
+// stackHeader is the preview of a stack, its group of PRs or a phase: how
+// many of my tickets are in each state and how many PRs in each phase (the
+// list itself shows no counts).
+func (m *model) stackHeader(r *row, width int) string {
+	var todo, doing, blocked int
+	for _, e := range m.entries {
+		if e.it.Stack != r.stack || e.it.Ghost {
+			continue
+		}
+		switch e.it.state() {
+		case stateDoing:
+			doing++
+		case stateBlocked:
+			blocked++
+		default:
+			todo++
+		}
+	}
+	var review, draft, merged int
+	for _, p := range m.pulls {
+		if p.Stack != r.stack {
+			continue
+		}
+		switch {
+		case p.State == prMerged:
+			merged++
+		case p.State == prOpen && p.Draft:
+			draft++
+		case p.State == prOpen:
+			review++
+		}
+	}
+	title := r.stack
+	if r.kind != rowHeader {
+		title += " · " + r.text
+	}
+	lines := []string{stTitle.Render(truncate(title, width))}
+	count := func(n int, what string, st lipgloss.Style) string {
+		return st.Render(strconv.Itoa(n)) + stDim.Render(" "+what)
+	}
+	lines = append(lines,
+		count(doing, "in progress", stDoing)+stDim.Render(" · ")+count(blocked, "blocked", stBlocked)+stDim.Render(" · ")+count(todo, "to do", stTodo),
+		count(review, "PRs in review", stWarn)+stDim.Render(" · ")+count(draft, "draft", stDim)+stDim.Render(" · ")+count(merged, "merged", stOK))
+	return strings.Join(lines, "\n")
 }
 
 // previewHeader is the instant (non-glamour) header above a ticket's body:
-// the title, the status with the meta line, the parent it hangs from, and
-// what it needs.
-func previewHeader(it issue, merged bool, width int) string {
+// the title, its short title under it, the status with the meta line and
+// the parent it hangs from.
+func previewHeader(it issue, short string, width int) string {
 	parts := append([]string{it.Key}, it.metaParts()...)
 	if !it.Created.IsZero() {
 		parts = append(parts, "created "+relTime(it.Created))
 	}
 	parts = append(parts, "updated "+relTime(it.Updated))
 	meta := strings.Join(parts, " · ")
-	title := truncate(it.Summary, width)
-	status := stateStyle(it.state()).Render("[" + it.Status + "]")
-	lines := []string{stTitle.Render(title), status + " " + stDim.Render(truncate(meta, width-ansi.StringWidth(it.Status)-3))}
+	lines := []string{stTitle.Render(truncate(it.Summary, width))}
+	if short != "" && short != it.Summary {
+		lines = append(lines, stDim.Render(truncate("≈ "+short, width)))
+	}
+	status := stateStyle(it.state()).Render("[" + strings.ToLower(it.Status) + "]")
+	lines = append(lines, status+" "+stDim.Render(truncate(meta, width-ansi.StringWidth(it.Status)-3)))
 	if it.ParentKey != "" && it.ParentSummary != "" {
 		lines = append(lines, stDim.Render(truncate("↳ "+it.ParentKey+" "+it.ParentSummary, width)))
 	}
-	switch {
-	case it.Ghost:
+	if it.Ghost {
 		lines = append(lines, stWarn.Render("not in your list"))
-	case merged:
-		lines = append(lines, stOK.Render("✓ all PRs merged"))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -86,7 +135,7 @@ func previewHeader(it issue, merged bool, width int) string {
 // pullHeader is the header above a PR's body: the title, where it is
 // (repo, branches, author), what it needs, and the review, checks and merge
 // facts under it.
-func pullHeader(p *pull, flags []prFlag, width int) string {
+func pullHeader(p *pull, flags []prFlag, short string, width int) string {
 	where := p.Key + " · " + p.Head
 	if p.Base != "" {
 		where += " → " + p.Base
@@ -94,12 +143,11 @@ func pullHeader(p *pull, flags []prFlag, width int) string {
 	if p.Author != "" {
 		where += " · by " + p.Author
 	}
-	lines := []string{stTitle.Render(truncate(p.Title, width)), stDim.Render(truncate(where, width))}
-	state := stateOfPull(p)
-	if fl := flagsLine(flags, lipgloss.NewStyle()); fl != "" {
-		state += " " + fl
+	lines := []string{stTitle.Render(truncate(p.Title, width))}
+	if short != "" && short != p.Title {
+		lines = append(lines, stDim.Render(truncate("≈ "+short, width)))
 	}
-	lines = append(lines, truncate(state, width))
+	lines = append(lines, stDim.Render(truncate(where, width)), truncate(flagsLine(flags, lipgloss.NewStyle()), width))
 	facts := []string{"review " + reviewFact(p)}
 	if p.Checks != "" {
 		facts = append(facts, "checks "+strings.ToLower(p.Checks))
@@ -110,19 +158,6 @@ func pullHeader(p *pull, flags []prFlag, width int) string {
 	facts = append(facts, "created "+relTime(p.Created), "updated "+relTime(p.Updated))
 	lines = append(lines, stDim.Render(truncate(strings.Join(facts, " · "), width)))
 	return strings.Join(lines, "\n")
-}
-
-// stateOfPull is the PR's state as a colored bracket, like a ticket's status.
-func stateOfPull(p *pull) string {
-	switch {
-	case p.State == prMerged:
-		return stOK.Render("[merged]")
-	case p.State == prClosed:
-		return stDim.Render("[closed]")
-	case p.Draft:
-		return stDim.Render("[draft]")
-	}
-	return stDoing.Render("[open]")
 }
 
 // reviewFact is the review state in words.

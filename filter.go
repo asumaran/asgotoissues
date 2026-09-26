@@ -10,6 +10,7 @@ package main
 
 import (
 	"strings"
+	"time"
 )
 
 // entry is one selectable ticket and the PRs linked to it (linkPulls).
@@ -20,35 +21,52 @@ type entry struct {
 
 // row kinds
 const (
-	rowHeader = "header" // a stack
-	rowGroup  = "group"  // the PRs without a ticket, under their stack
-	rowIssue  = "issue"
-	rowPull   = "pull"
+	rowHeader  = "header"  // a stack
+	rowGroup   = "group"   // the PRs without a ticket, under their stack
+	rowSection = "section" // a phase, in the phase view
+	rowIssue   = "issue"
+	rowPull    = "pull"
 )
 
 type row struct {
 	kind      string
 	e         *entry // issue rows
 	p         *pull  // pull rows
+	pe        *entry // pull rows: the ticket it hangs from (nil in the group)
 	stack     string
-	text      string // group rows
-	depth     int    // nesting: how many rows it hangs from
-	col       int    // the cells the row is set in from the gutter: where its parent's title starts
+	text      string // group and section rows
+	count     int    // section rows: how many rows it holds
+	depth     int    // nesting: a root ticket is 0, a PR is one past its ticket
 	parent    string // what it hangs from (the parent's URL), for the row's identity
 	match     bool   // a hit
 	ctx       bool   // an ancestor listed to lead to a hit, not a hit itself
 	score     int
-	idx       []int    // matched rune positions in the summary, for highlighting
-	kids      bool     // issue rows: it has PRs or children to fold
-	collapsed bool     // issue rows: folded, its PRs and children not listed
-	level     int      // attention: the worst of the row's flags (a ticket's: of its PRs and its descendants')
-	merged    bool     // issue rows: every PR merged
-	flags     []prFlag // pull rows: what the PR needs
-	needs     []prFlag // issue rows: what its PRs and its descendants' need, once each, worst first
+	idx       []int     // matched byte offsets in the summary, for highlighting
+	kids      bool      // it has something to fold
+	collapsed bool      // folded: what hangs from it is not listed
+	level     int       // attention: a ticket's own PRs', a PR's own
+	noPR      bool      // issue rows: started, and neither PRs nor children
+	last      time.Time // the last activity
+	state     prFlag    // pull rows: the PR's state
+	flags     []prFlag  // pull rows: what the PR needs, then the facts
+	needN     int       // pull rows: how many of flags are needs
+	path      []pathKey // phase rows: the tickets it hangs from, root first
+
+	// The tree's guides (tree view): rails[j] draws a │ in the arrow column
+	// of depth j; a ticket under a ticket takes a branch (├ or └, lastSib)
+	// in its parent's arrow column, and kidRail runs from its own arrow down
+	// to its sub-tickets.
+	rails   []bool
+	lastSib bool
+	kidRail bool
 }
 
-// selectable reports whether the cursor may sit on the row.
-func (r row) selectable() bool { return r.kind == rowIssue || r.kind == rowPull }
+// selectable reports whether the cursor may sit on the row: every row but
+// nothing, the headers and sections included (they fold).
+func (r row) selectable() bool { return r.kind != "" }
+
+// opens reports whether the row is something to open.
+func (r row) opens() bool { return r.kind == rowIssue || r.kind == rowPull }
 
 // url is what the row opens.
 func (r row) url() string {
@@ -62,7 +80,12 @@ func (r row) url() string {
 }
 
 // id tells a row from every other, a PR under two tickets included.
-func (r row) id() string { return r.parent + "|" + r.url() }
+func (r row) id() string {
+	if !r.opens() {
+		return foldKey(r)
+	}
+	return r.parent + "|" + r.url()
+}
 
 // buildEntries wraps issues in display order (mergeStacks already grouped
 // them by stack, newest first within each).
@@ -77,11 +100,19 @@ func buildEntries(issues []issue) []*entry {
 // corpora returns the three parallel search texts for entries, as they are
 // shown: the matcher folds case itself, scores a camelCase boundary, and its
 // offsets are bytes into the very string the row highlights.
-func corpora(entries []*entry) (summaries, keys, metas []string) {
+//
+// title is the title a row shows (the short one when there is one): it is
+// the first corpus, whose offsets the row highlights; the tracker's own
+// title goes with the metadata, so both are searched.
+func corpora(entries []*entry, title func(e *entry) string) (summaries, keys, metas []string) {
 	for _, e := range entries {
-		summaries = append(summaries, e.it.Summary)
+		t := title(e)
+		summaries = append(summaries, t)
 		keys = append(keys, e.it.Key+" "+e.it.number())
 		parts := []string{e.it.Status, e.it.Type, e.it.Project, e.it.Stack, e.it.ParentKey, e.it.ParentSummary, strings.Join(e.it.Meta, " ")}
+		if t != e.it.Summary {
+			parts = append(parts, e.it.Summary)
+		}
 		for _, p := range e.pulls {
 			parts = append(parts, p.Key, p.number(), p.Head)
 		}
@@ -140,7 +171,7 @@ func matchBonus(e *entry, h hit, q string) int {
 // tickets as a tree with their PRs (buildTree). When filtering, the hits
 // are scored and the tree keeps them and the ancestors that lead to them,
 // best match first.
-func buildRows(entries []*entry, pulls []pull, unlinked map[string][]*pull, order orderMode, prs prsMode, hideMerged bool, collapsed map[string]bool, q string, summaries, keys, metas []string) []row {
+func buildRows(entries []*entry, pulls []pull, unlinked map[string][]*pull, opts treeOpts, q string, summaries, keys, metas []string) []row {
 	var hits map[int]hit
 	if hasTerms(q) {
 		hits = findHits(q, summaries, keys, metas)
@@ -149,11 +180,17 @@ func buildRows(entries []*entry, pulls []pull, unlinked map[string][]*pull, orde
 			hits[i] = h
 		}
 	}
-	return buildTree(entries, pulls, unlinked, order, prs, hideMerged, collapsed, hits)
+	return buildTree(entries, pulls, unlinked, opts, hits)
 }
 
-// firstIssue returns the index of the first row the cursor may sit on, or -1.
+// firstIssue returns the index of the first ticket or PR, else the first row
+// the cursor may sit on, or -1.
 func firstIssue(rows []row) int {
+	for i, r := range rows {
+		if r.opens() {
+			return i
+		}
+	}
 	for i, r := range rows {
 		if r.selectable() {
 			return i

@@ -30,7 +30,7 @@ func testModel(t *testing.T) model {
 func TestViewRendersRows(t *testing.T) {
 	m := testModel(t)
 	view := m.render()
-	for _, want := range []string{"alpha", "PLAT-100", "fix login flow", "beta", "BETA-7", "update readme", "[In Progress]"} {
+	for _, want := range []string{"alpha", "plat-100", "fix login flow", "beta", "beta-7", "update readme", "in progress"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("render() missing %q\n----\n%s", want, view)
 		}
@@ -41,7 +41,7 @@ func TestViewAfterWindowResize(t *testing.T) {
 	m := testModel(t)
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 34})
 	view := res.(model).render()
-	if !strings.Contains(view, "PLAT-100") {
+	if !strings.Contains(view, "plat-100") {
 		t.Errorf("render() after resize missing rows:\n%s", view)
 	}
 }
@@ -63,7 +63,8 @@ func TestFilterNarrowsRows(t *testing.T) {
 
 func TestEnterQueuesURLAndQuits(t *testing.T) {
 	m := testModel(t)
-	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyDown}) // the beta header
+	mm, _ = mm.(model).handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	mm, cmd = mm.(model).handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatalf("enter should return tea.Quit")
@@ -249,7 +250,7 @@ func TestSourceMsgPartialFailureKeepsCache(t *testing.T) {
 		t.Errorf("refresh should be finished")
 	}
 	view := res.render()
-	if !strings.Contains(view, "PLAT-100") || !strings.Contains(view, "BETA-8") || strings.Contains(view, "BETA-7") {
+	if !strings.Contains(view, "plat-100") || !strings.Contains(view, "beta-8") || strings.Contains(view, "beta-7") {
 		t.Errorf("expected cached alpha + fresh beta:\n%s", view)
 	}
 	if !strings.Contains(view, "boom") {
@@ -271,6 +272,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	os.Setenv("ASGOTOISSUES_CHECKOUTS", dir) // no repos: the tests never read the machine's checkouts
+	summarizerOff = true                     // nothing is spawned
+	defaultShow = showAll                    // the fixtures list everything unless a test asks otherwise
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -308,7 +312,7 @@ func TestFrameGeometry(t *testing.T) {
 		}
 		// The list starts at listY: the stack's name and the selected issue
 		// under it, or the issue alone when the body is a single line.
-		if top := plain[listY]; !strings.HasPrefix(top, "│alpha") && !strings.HasPrefix(top, "│▌ PLAT-1") {
+		if top := plain[listY]; !strings.HasPrefix(top, "│▼ alpha") && !strings.HasPrefix(top, "│▌  plat-1") {
 			t.Errorf("%v: the list does not start at listY: %q", size, top)
 		}
 		help := plain[len(plain)-2]
@@ -328,7 +332,7 @@ func TestClickSelectsTicketRow(t *testing.T) {
 	if r := got.currentRow(); r == nil || r.e.it.Key != "BETA-7" || got.openURL != "" {
 		t.Fatalf("click must select BETA-7 without opening it: cursor=%d open=%q", got.cursor, got.openURL)
 	}
-	for _, c := range []tea.MouseClickMsg{click(3, listY+3), click(got.listW()+10, listY+1),
+	for _, c := range []tea.MouseClickMsg{click(got.listW()+10, listY+1),
 		click(got.listW()+1, listY+1), click(0, listY+1), click(3, mainY), click(3, 1)} {
 		res, _ = got.Update(c)
 		if res.(model).cursor != got.cursor {
@@ -469,14 +473,14 @@ func TestSelectedRowKeepsItsMatches(t *testing.T) {
 		t.Fatalf("the cursor should sit on the matching issue: %+v", r)
 	}
 	sel, plain := m.rowLine(r, true, 200), m.rowLine(r, false, 200)
-	if !strings.Contains(sel, matchOver(stSel).Render("readme")) {
+	if !strings.Contains(sel, matchOver(stRowSel.Faint(true)).Render("r")) {
 		t.Errorf("selected row lost its match: %q", sel)
 	}
-	if !strings.Contains(plain, stMatch.Render("readme")) {
+	if !strings.Contains(plain, matchOver(lipgloss.NewStyle().Faint(true)).Render("r")) {
 		t.Errorf("row lost its match: %q", plain)
 	}
 	// (the selected row is also padded to the column, so compare without it)
-	if strings.TrimRight(ansi.Strip(sel), " ")[len("▌ "):] != ansi.Strip(plain)[len("  "):] {
+	if strings.TrimRight(ansi.Strip(sel), " ")[len("▌"):] != ansi.Strip(plain)[len(" "):] {
 		t.Errorf("selecting a row changes only its gutter: %q vs %q", ansi.Strip(sel), ansi.Strip(plain))
 	}
 	// cutting the row keeps the ellipsis inside the last styled run
@@ -509,7 +513,7 @@ func TestPanel(t *testing.T) {
 		t.Fatalf("the panel changed the frame: %d lines (list %d), want %d (list %d)", len(open), m.listVP.Height(), len(closed), list)
 	}
 	all := strings.Join(open, "\n")
-	for _, want := range []string{"╭─ options ", "Options", "Order", "‹created›", "PRs", "‹all›", "Rows", "‹two lines›", "Merged", "‹show›", "Keys", "esc close", "pgup/pgdn", "⌥↑/⌥↓", "scroll the description", "resize the list", "order by updated"} {
+	for _, want := range []string{"╭─ options ", "Options", "Order", "‹created›", "PRs", "‹all›", "Rows", "‹two lines›", "Show", "Group", "‹tree›", "Titles", "‹short›", "Keys", "esc close", "pgup/pgdn", "⌥↑/⌥↓", "scroll the description", "resize the list", "order by updated"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the panel lacks %q:\n%s", want, all)
 		}
@@ -660,7 +664,8 @@ func TestNetworkErrorGivesTheHelpLineBack(t *testing.T) {
 // nothing, so it neither ranks the list nor moves the cursor (hasTerms).
 func TestSpaceIsNotAQuery(t *testing.T) {
 	m := testModel(t)
-	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // the beta header
+	res, _ = res.(model).Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = res.(model)
 	at, rows := m.cursor, len(m.rows)
 	for _, k := range []string{" ", "~"} {

@@ -76,32 +76,50 @@ and always get their pull requests from there, a Jira-only stack included.
 ## Usage
 
 The list is a tree: under each stack a ticket hangs from its parent (a
-sub-task from its story, the story from its epic), whatever the depth. A
-parent that is not assigned to you (an epic of someone else's, a Done one) is
-fetched all the same and shown dim, so your tickets sit where they belong;
-its preview says `not in your list`. Under each ticket come the pull
-requests that name it (in the branch, the title or the closing keywords; a
-key merely mentioned in the body counts only when nothing else links), one
-row per PR with the repo in the key, whatever repo it lives in, and a PR
-that names several tickets appears under each. Your PRs that name no ticket
-close their stack under `PRs without a ticket`.
+sub-task from its story, the story from its epic), whatever the depth, drawn
+with guides from the parent's fold arrow (`├── ▼ shop-62`). A parent that
+is not assigned to you (an epic of someone else's, a Done one) is fetched all
+the same, so your tickets sit where they belong; its details say `not
+yours`. Under each ticket come, as a list, the pull requests that name it (in
+the branch, the title or the closing keywords; a key merely mentioned in the
+body counts only when nothing else links), one `○ repo#N` per PR, whatever
+repo it lives in, and a PR that names several tickets appears under each.
+Your PRs that name no ticket close their stack under `PRs without a ticket`.
 
-A ticket or a PR takes two lines: the key and the title on the first, its
-details dim under the title (a ticket: status, type, last update, how many
-PRs; a PR: `open`, what it needs, the author when it is not you, the last
-update). A child row starts where its parent's title starts. The `Rows` option in the panel puts everything on one line instead,
-for a list twice as long on screen.
+```
+▼ acme
+ ▼ shop-51 Corregir los datos estructurados de todas las marcas
+ │     in progress · 1w
+ ├── ▼ shop-62 Emitir las migas de pan desde la plantilla de categoría
+ │   │     in progress · today
+ │   │   ○ web-app#8233 Migas de pan: la plantilla genera la lista
+ │   │     draft · ci failed · to answer · today
+ │   └──── shop-66 Definir qué esquema manda cuando el CMS trae uno
+ │             blocked · no PR · 2w
+```
 
-The list is two tones: a row's first line is plain, its details line is dim
-(a lighter grey on the selected row), and colors are kept for the preview.
-What a PR needs is written on its details line: `conflicts`, `changes requested`, `ci
-failed`, `base merged` (it sits on a branch that was merged: retarget it),
-`review requested` (of you), `behind base` (the base moved), `ci pending`,
-`awaiting review`, `approved` (ready to merge), `on #N` (stacked on that
-PR), `draft`, `merged`. A ticket's details line collects what its PRs and
-every ticket under it need, worst first, so an epic shows the conflict three
-levels down (`2 PRs · conflicts · awaiting review`); a ticket whose every PR
-is merged says `all merged` (move it).
+A ticket or a PR takes two lines: its key (in its level's color) and its
+title, then its details, most important first and the age of its last
+activity last. A ticket says its own status (green in progress, red blocked,
+blue to do), `no PR` when it is started and has neither PRs nor children,
+`not yours` for a parent that is not yours. A PR says its state (`in
+review`, `draft`, `approved`, `changes requested`, `merged`), what it needs
+from you in red (`conflicts`, `ci failed`, `to answer`: a review comment
+waits for your reply, `base merged`: it sits on a branch that was merged,
+retarget it, `review requested`: of you), what your checkout of its branch
+holds that GitHub has not seen, the way the shell prompt counts it (`↑2`
+commits to push, `+1` staged, `!3` unstaged, `?1` untracked), and the facts
+(`behind master`: the base moved, `stacked on #8027`, `by someone`). Nothing
+is inherited: a ticket never repeats what its PRs or its children say.
+
+The titles are short Spanish summaries, 6 to 14 words, a child's written as
+a part of its parent's goal so the tree reads top-down (the preview keeps
+the full title). They are written by Claude Haiku through the Claude Code
+CLI (`claude -p`) in the background, only for new or edited items, and
+cached; until one arrives the row shows the tracker's title. This sends the
+titles and the start of the descriptions of your tickets and PRs to
+Anthropic through your Claude Code account: set `Titles: original` in the
+panel (`f1`) to never do it.
 
 The filter input is focused on open, so just type. A query of several words matches them in any order (`login fix` finds "fix login flow"), and a word starting with `'` must occur as typed instead of fuzzily (`'dex`). Search is fuzzy over the
 summary, the key (`2099` finds `PLAT-2099`, so does `plat-2099`; `12` finds
@@ -114,13 +132,16 @@ branches of the linked PRs (`8122` finds the ticket of `front#8122`).
 | `enter`, `ctrl+o` | open the ticket or the PR in the browser |
 | `ctrl+y` | copy the issue key (`PLAT-2099`, `tool#12`), or a PR's URL, to the clipboard; the help line confirms it |
 | `ctrl+s` | cycle the order: `created`, `updated`, `key`, `attention` (remembered) |
-| `space` (empty filter) | fold or unfold the ticket's PRs and children (on a PR, its ticket); a folded ticket shows `▸` at the left edge |
+| `ctrl+t` | cycle what is listed: `working`, `pending`, `all` (remembered) |
+| `ctrl+g` | group as a tree or by phase (remembered) |
+| `space` (empty filter) | fold or unfold the row: a ticket, a stack, the PRs without a ticket, a phase (on a PR, its ticket) |
+| `shift+tab` / `tab` | fold the whole tree one level shallower / deeper: all, then down to the roots alone, and back |
 | `↑/↓`, `ctrl+p`/`ctrl+n` | move the cursor |
 | PgDn/PgUp | move the cursor a page |
 | `alt+↑`/`alt+↓`, Home/End | top or bottom of the list |
 | `shift+↓`/`shift+↑`, mouse wheel over the preview | scroll the description |
 | mouse wheel over the list | move the cursor |
-| `f1` | open the panel with the options (`Order`; `PRs`: all, open, attention; `Rows`: two lines, one line; `Merged`: show, hide) and every key (`esc` closes it) |
+| `f1` | open the panel with the options (`Order`; `PRs`: all, open, attention; `Show`; `Group`; `Rows`: two lines, one line; `Titles`: short, original) and every key (`esc` closes it) |
 | `shift+←`/`shift+→` | resize the list; the split is remembered (the list takes a quarter of the width by default) |
 | click | select a row, on either of its lines (`enter` still opens it) |
 | `esc`, `ctrl+c`, `q` with an empty filter | quit |
@@ -131,12 +152,17 @@ match comes first among its siblings, its stack on top, and the cursor
 starts on it. Rows that match equally well stay in their usual order.
 
 The order (`f1`, or `ctrl+s` to cycle it) applies to every level of the tree
-on its own: `created` (newest first, the default), `updated`, `key`, or
-`attention` (what needs you first, then blocked, in progress, to do). The
-PRs shown are an option too: all, open only, or only the ones that need
-something; so are the lines a row takes, and whether the merged work shows
-(`Merged: hide` leaves out the merged PRs and the tickets with nothing left
-under them, so the list is what is not finished). All four are remembered.
+on its own: `created` (newest first, the default), `updated` (last activity,
+a ticket's PRs included), `key`, or `attention` (what needs you first, then
+blocked, in progress, to do). What is listed is an option too (`ctrl+t`):
+`working` (the default: tickets in progress or with an open PR, their
+parents as containers, and the open PRs), `pending` (everything not
+finished: blocked and not started tickets too) or `all`. By phase (`ctrl+g`)
+the list is a section per PR state, `PR in review`, `draft PR`, `PRs merged`,
+each PR with the path of its tickets on one line (`shop-51 › shop-62 ›
+web-app#8233`), and `no PR` with the tickets that have none. The PRs
+shown (all, open, the ones that need something), the lines a row takes and
+the titles are options as well. All are remembered.
 
 Pasting into the filter (a terminal paste or `ctrl+v`) filters like typing
 does. A query of spaces only, or a bare `~` or `'`, is not a query yet: the
@@ -176,14 +202,18 @@ list stays as it is and the cursor does not move.
   mark, and the snapshot is revalidated again on the next open.
 - A configuration file that cannot be read keeps the popup from starting: the
   message stays on screen until `enter` (from a shell it is a plain error).
-- A ticket's state is written, never told by the key's color: on the
-  second line of its row (`[In Progress]` after the key with one-line rows)
-  and in the preview, green while in progress, dim for to-do, red when
-  blocked. In Jira that comes from the status category, and from a status
-  name that contains "block". In GitHub it comes from the labels: one that
-  contains "block", or one like `in progress`, `doing` or `wip`. What the
-  ticket's PRs need from you is a different thing, written after it on the
-  same line.
+- A ticket's status is written in lower case and colored by its category:
+  green in progress, red blocked, blue to do. In Jira that comes from the
+  status category, and from a status name that contains "block". In GitHub
+  it comes from the labels: one that contains "block", or one like `in
+  progress`, `doing` or `wip`; the word is then `in progress`, `blocked` or
+  `open`.
+- `behind <base>` and `to answer` take one more query per refresh (the
+  commits a head lacks from its base cannot ride in the search); if it
+  fails, the rows just do not say it.
+- Your checkouts are found under `~/Developer` (each repo's worktrees, so
+  `~/wt/...` too), matched by the origin's owner/repo and the branch;
+  `ASGOTOISSUES_CHECKOUTS` (paths joined by `:`) replaces the roots.
 
 ## Development
 
@@ -193,13 +223,15 @@ go build -o asgotoissues .          # local build (plugin runs ./asgotoissues fr
 ./asgotoissues -dump -query cart    # the matches and their scores instead of the list
 ./asgotoissues -dump -show PLAT-2099 # print an issue's description as Markdown
 ./asgotoissues -dump -order attention # the tree in that order (not saved)
+./asgotoissues -dump -summarize     # write the missing short titles first
 ./asgotoissues -version             # print the embedded version
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 + pyte)
 herdr plugin link "$PWD"   # register the working copy (no build step)
 ```
 
-Runtime state (`issuecache.json`, the divider's `split-columns`) lives in
+Runtime state (`issuecache.json`, `summaries.json`, the divider's
+`split-columns`, the options) lives in
 `HERDR_PLUGIN_STATE_DIR`; standalone runs use the same directory
 (`~/.local/state/herdr/plugins/asumaran.asgotoissues/`).
 
@@ -209,7 +241,10 @@ appended) and `ASGOTOISSUES_CLIPBOARD`
 replaces the clipboard command (`pbcopy` on macOS, else `wl-copy`, `xclip` or
 `xsel`); the tests use them to capture the URL and the copied key.
 `ASGOTOISSUES_POPUP_WIDTH` / `ASGOTOISSUES_POPUP_HEIGHT` override the popup
-size from the manifest.
+size from the manifest. `ASGOTOISSUES_SUMMARIZER` replaces the command that
+writes the short titles (it reads `{"items": [...]}` on stdin and answers a
+JSON list of `{"id", "summary"}`), `ASGOTOISSUES_NO_SUMMARIES` turns it off,
+and `ASGOTOISSUES_CHECKOUTS` sets where your checkouts are looked for.
 
 ## Releasing
 

@@ -45,27 +45,29 @@ func listText(m model) []string {
 	return out
 }
 
-// TestViewRendersTree: the story with its details under it (what its PRs
-// need, in words), its PRs under it (key and title, then the state and the
-// flags), the sub-task set in where the story's title starts, the counter
-// of my tickets alone; and, with one-line rows, everything on the row.
+// TestViewRendersTree: the story with its details under it (its status and
+// its age: nothing its PRs need), its PRs as bullets under it (key and
+// title, then the state and what they need), the sub-task on a branch from
+// the story's arrow, the guide from the arrow down to it, keys in lower
+// case, the counter of my tickets alone; and, with one-line rows,
+// everything on the row.
 func TestViewRendersTree(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	m := treeTestModel(t)
 	lines := listText(m)
 	want := []string{
-		"alpha",
-		"▌ PLAT-100 fix login flow",
-		"▌          In Progress · Story · updated ",
-		"           ↳ front#1 PLAT-100 login",
-		"                     open · conflicts · ",
-		"           ↳ infra#2 PLAT-100 config",
-		"                     merged · ",
-		"           PLAT-101 add the test",
-		"                    Open · Sub-task · updated ",
-		"beta",
-		"  BETA-7 update readme",
-		"         To Do · Story · updated ",
+		"▼ alpha",
+		"▌▼ plat-100 fix login flow",
+		"▌│     in progress · ",
+		" │   ○ front#1 PLAT-100 login",
+		" │     in review · conflicts · ",
+		" │   ○ infra#2 PLAT-100 config",
+		" │     merged · ",
+		" └──── plat-101 add the test",
+		"           open · ",
+		"▼ beta",
+		"   beta-7 update readme",
+		"       to do · ",
 	}
 	for i, w := range want {
 		if i >= len(lines) || !strings.HasPrefix(lines[i], w) {
@@ -73,24 +75,24 @@ func TestViewRendersTree(t *testing.T) {
 		}
 	}
 	wide := ansi.Strip(m.detailLine(m.rows[1], false, 200))
-	if !strings.HasSuffix(wide, " · 2 PRs · conflicts") || m.lineOf[1] != 1 || m.lineOf[2] != 3 || m.lines != 12 {
-		t.Errorf("the story counts its PRs and the rows know their lines: %q, %v, %d", wide, m.lineOf, m.lines)
+	if strings.Contains(wide, "conflicts") || m.lineOf[1] != 1 || m.lineOf[2] != 3 || m.lines != 12 {
+		t.Errorf("the story says nothing of its PRs' needs and the rows know their lines: %q, %v, %d", wide, m.lineOf, m.lines)
 	}
 	m.rowsM = rowsOne
 	m.renderList()
 	lines = listText(m)
 	want = []string{
-		"alpha",
-		"▌ PLAT-100 [In Progress] fix login flow",
-		"           ↳ front#1  conflicts  PLAT-100 login",
-		"           ↳ infra#2  merged  PLAT-100 config",
-		"           PLAT-101 [Open] add the test",
-		"beta",
-		"  BETA-7 [To Do] update readme",
+		"▼ alpha",
+		"▌▼ plat-100 in progress · ",
+		" │   ○ front#1 in review · conflicts · ",
+		" │   ○ infra#2 merged · ",
+		" └──── plat-101 open · ",
+		"▼ beta",
+		"   beta-7 to do · ",
 	}
 	for i, w := range want {
-		if i >= len(lines) || lines[i] != w {
-			t.Errorf("one line: line %d = %q, want %q", i, lines[i], w)
+		if i >= len(lines) || !strings.HasPrefix(lines[i], w) {
+			t.Errorf("one line: line %d = %q, want it to start with %q", i, lines[i], w)
 		}
 	}
 	if m.lines != 7 {
@@ -105,39 +107,65 @@ func TestViewRendersTree(t *testing.T) {
 	}
 }
 
-// TestTwoTones: the list is two tones: a row's first line is plain (no
-// color on the key, the status or the flags), its details are dim, and
-// under the selection the details take a lighter grey over the background
-// instead of the dim one, which would vanish there.
-func TestTwoTones(t *testing.T) {
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
-	m := treeTestModel(t)
-	story, pr := m.rows[1], m.rows[2]
-	for name, line := range map[string]string{
-		"story":       m.rowLine(story, false, 200),
-		"story (sel)": m.rowLine(story, true, 200),
-		"pr":          m.rowLine(pr, false, 200),
-		"pr (sel)":    m.rowLine(pr, true, 200),
-	} {
-		for _, color := range []lipgloss.Style{stKey, stDoing, stBad, stWarn, stOK} {
-			if seq := color.Render("x"); strings.Contains(line, seq[:strings.Index(seq, "x")]) {
-				t.Errorf("%s: the first line carries a color: %q", name, line)
+// sgrBold reports whether a styled string turns bold on anywhere.
+func sgrBold(s string) bool {
+	for _, seq := range strings.Split(s, "\x1b[")[1:] {
+		end := strings.IndexByte(seq, 'm')
+		if end < 0 {
+			continue
+		}
+		params := strings.Split(seq[:end], ";")
+		for i := 0; i < len(params); i++ {
+			if params[i] == "38" || params[i] == "48" { // a color: skip its arguments
+				if i+1 < len(params) && params[i+1] == "5" {
+					i += 2
+				} else if i+1 < len(params) && params[i+1] == "2" {
+					i += 4
+				}
+				continue
+			}
+			if params[i] == "1" {
+				return true
 			}
 		}
 	}
-	detail := m.detailLine(story, false, 200)
-	if !strings.Contains(detail, stDetail.Render("In Progress · Story")[:5]) || strings.Contains(detail, stDoing.Render("x")[:5]) {
-		t.Errorf("the details are dim, one tone: %q", detail)
+	return false
+}
+
+// TestRowColors: a ticket's key in its level's color, a PR's in teal, the
+// titles faint, the status and what a PR needs in their colors (faint), the
+// rest of the details dim, and no bold anywhere, the selected row included
+// (its dim words a lighter grey over the background).
+func TestRowColors(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	m := treeTestModel(t)
+	story, pr, sub := m.rows[1], m.rows[2], m.rows[4]
+	checks := []struct {
+		name, line, want string
+	}{
+		{"story key", m.rowLine(story, false, 200), keyStyle(0).Render("plat-100")},
+		{"sub-task key", m.rowLine(sub, false, 200), keyStyle(1).Render("plat-101")},
+		{"pr key", m.rowLine(pr, false, 200), stPRKey.Render("front#1")},
+		{"title", m.rowLine(story, false, 200), lipgloss.NewStyle().Faint(true).Render("fix login flow")},
+		{"status", m.detailLine(story, false, 200), stDoing.Faint(true).Render("in progress")},
+		{"state", m.detailLine(pr, false, 200), stWarn.Faint(true).Render("in review")},
+		{"needs", m.detailLine(pr, false, 200), stBad.Faint(true).Render("conflicts")},
+		{"separator", m.detailLine(pr, false, 200), stDetail.Render(" · ")},
+		{"selected dim", m.detailLine(story, true, 200), stDetailSel.Render(" · ")},
 	}
-	sel := m.detailLine(story, true, 200)
-	dimOnSel := stSel.Foreground(stDim.GetForeground()).Render("x")
-	if strings.Contains(sel, dimOnSel[:strings.Index(dimOnSel, "x")]) || !strings.Contains(sel, stDetailSel.Render("x")[:strings.Index(stDetailSel.Render("x"), "x")]) {
-		t.Errorf("the selected details are a lighter grey over the background: %q", sel)
+	for _, c := range checks {
+		if !strings.Contains(c.line, c.want) {
+			t.Errorf("%s: %q lacks %q", c.name, c.line, c.want)
+		}
 	}
-	m.rowsM = rowsOne
-	one := m.rowLine(pr, false, 200)
-	if !strings.Contains(one, stDetail.Render("conflicts")) || strings.Contains(one, stBad.Render("conflicts")) {
-		t.Errorf("one-line flags are dim, not colored: %q", one)
+	for i := range m.rows {
+		for _, sel := range []bool{false, true} {
+			for _, l := range m.rowLines(m.rows[i], sel, 200) {
+				if sgrBold(l) {
+					t.Errorf("row %d (selected %v) is bold: %q", i, sel, l)
+				}
+			}
+		}
 	}
 }
 
@@ -159,12 +187,12 @@ func TestPullRowOpensAndCopies(t *testing.T) {
 		t.Fatalf("down from the story lands on its first PR, got %+v", r)
 	}
 	plain := ansi.Strip(m.render())
-	for _, want := range []string{"PLAT-100 login", "front#1 · feat/PLAT-100 → main · by me", "[open] conflicts", "review no rule"} {
+	for _, want := range []string{"PLAT-100 login", "front#1 · feat/PLAT-100 → main · by me", "in review · conflicts", "review no rule"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("the PR preview lacks %q:\n%s", want, plain)
 		}
 	}
-	if hh := lipgloss.Height(headerOf(r, m.prevW())); m.prevVP.Height() != m.bodyH()-hh-1 {
+	if hh := lipgloss.Height(m.headerOf(r, m.prevW())); m.prevVP.Height() != m.bodyH()-hh-1 {
 		t.Errorf("the body viewport is %d lines under a header of %d, want %d", m.prevVP.Height(), hh, m.bodyH()-hh-1)
 	}
 	res, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
@@ -261,7 +289,7 @@ func TestRowsOptionPersists(t *testing.T) {
 			m = res.(model)
 		}
 	}
-	press(tea.KeyPressMsg{Code: tea.KeyF1}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyRight})
+	press(tea.KeyPressMsg{Code: tea.KeyF1}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyRight})
 	if m.rowsM != rowsOne || loadSetting(stateDir(), "rows") != "one" || m.lines != 7 {
 		t.Errorf("rows = %s, saved %q, %d lines", m.rowsM, loadSetting(stateDir(), "rows"), m.lines)
 	}
@@ -273,10 +301,10 @@ func TestRowsOptionPersists(t *testing.T) {
 	}
 }
 
-// TestMergedOptionHidesDoneWork: the panel's Merged option set to hide takes
-// out the merged PR row, and a ticket whose every PR is merged with it; it is
-// remembered.
-func TestMergedOptionHidesDoneWork(t *testing.T) {
+// TestShowOptionHidesDoneWork: the panel's Show option set to pending takes
+// out the merged PR row, and a ticket whose every PR is merged with it; it
+// is remembered; ctrl+t cycles it.
+func TestShowOptionHidesDoneWork(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	m := treeTestModel(t)
 	// BETA-7 gets a merged PR and nothing else: done.
@@ -290,46 +318,212 @@ func TestMergedOptionHidesDoneWork(t *testing.T) {
 			m = res.(model)
 		}
 	}
-	press(tea.KeyPressMsg{Code: tea.KeyF1}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyRight})
-	if !m.hideMerged || loadSetting(stateDir(), "merged") != "hide" {
-		t.Errorf("merged = %v, saved %q", m.hideMerged, loadSetting(stateDir(), "merged"))
+	press(tea.KeyPressMsg{Code: tea.KeyF1}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyDown}, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if m.show != showPending || loadSetting(stateDir(), "show") != "pending" {
+		t.Errorf("show = %v, saved %q", m.show, loadSetting(stateDir(), "show"))
 	}
 	lines := strings.Join(listText(m), "\n")
-	for _, gone := range []string{"infra#2", "BETA-7", "beta"} {
+	for _, gone := range []string{"infra#2", "beta-7", "beta"} {
 		if strings.Contains(lines, gone) {
-			t.Errorf("hide merged kept %q:\n%s", gone, lines)
+			t.Errorf("pending kept %q:\n%s", gone, lines)
 		}
 	}
-	if !strings.Contains(lines, "front#1") || !strings.Contains(lines, "PLAT-101") {
-		t.Errorf("hide merged lost open work:\n%s", lines)
+	if !strings.Contains(lines, "front#1") || !strings.Contains(lines, "plat-101") {
+		t.Errorf("pending lost open work:\n%s", lines)
 	}
 	if !strings.Contains(ansi.Strip(m.render()), "─ 2/3 ─┴") {
 		t.Errorf("the counter says two of three tickets show:\n%s", ansi.Strip(m.render()))
 	}
-	if again := treeTestModel(t); !again.hideMerged {
-		t.Errorf("the next run opens with merged hidden")
+	if again := treeTestModel(t); again.show != showPending {
+		t.Errorf("the next run opens with pending")
+	}
+	press(tea.KeyPressMsg{Code: tea.KeyEscape}, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	if m.show != showAll || m.flash.text != "show: all" {
+		t.Errorf("ctrl+t goes to the next show: %s, %q", m.show, m.flash.text)
+	}
+	if lines = strings.Join(listText(m), "\n"); !strings.Contains(lines, "plat-101") || !strings.Contains(lines, "beta-7") {
+		t.Errorf("all lists everything:\n%s", lines)
+	}
+	press(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	if lines = strings.Join(listText(m), "\n"); m.show != showWorking || strings.Contains(lines, "plat-101") {
+		t.Errorf("working leaves out the sub-task not started:\n%s", lines)
+	}
+}
+
+// TestGroupByPhase: ctrl+g lists by phase: a section per PR state with the
+// PR rows under it, each with the path of its tickets, and the tickets
+// without a PR; ctrl+g again goes back to the tree. Space on a section
+// folds it.
+func TestGroupByPhase(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	m := treeTestModel(t)
+	res, _ := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	m = res.(model)
+	lines := listText(m)
+	want := []string{
+		"▼ alpha",
+		" ▼ ── PR in review (1) ",
+		"  plat-100 › front#1 PLAT-100 login",
+		"      in review · conflicts · in progress · ",
+		" ▼ ── no PR (1) ",
+		"  plat-100 › plat-101 add the test",
+		"      open · ",
+		" ▼ ── PRs merged (1) ",
+		"  plat-100 › infra#2 PLAT-100 config",
+		"      merged · in progress · ",
+		"▼ beta",
+		" ▼ ── no PR (1) ",
+		"  beta-7 update readme",
+	}
+	for i, w := range want {
+		got := ""
+		if i < len(lines) {
+			got = strings.Replace(lines[i], "▌", " ", 1)
+		}
+		if !strings.HasPrefix(got, w) && !strings.HasPrefix(got, " "+w[1:]) {
+			t.Errorf("line %d = %q, want it to start with %q", i, got, w)
+		}
+	}
+	if m.group != groupPhase || loadSetting(stateDir(), "group") != "phase" {
+		t.Errorf("group = %s", m.group)
+	}
+	for i, r := range m.rows {
+		if r.kind == rowSection && r.text == phaseMerged {
+			m.cursor = i
+		}
+	}
+	res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	m = res.(model)
+	if strings.Contains(strings.Join(listText(m), "\n"), "infra#2") {
+		t.Errorf("a folded section lists nothing")
+	}
+	res, _ = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	if res.(model).group != groupTree {
+		t.Errorf("ctrl+g goes back to the tree")
+	}
+}
+
+// TestLevelKeys: shift+tab folds the tree one level shallower (all, then
+// the deepest level, down to the roots alone), tab one deeper and back to
+// all; with a query they do nothing.
+func TestLevelKeys(t *testing.T) {
+	m := treeTestModel(t)
+	shift := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	tab := tea.KeyPressMsg{Code: tea.KeyTab}
+	res, _ := m.Update(shift)
+	m = res.(model)
+	if m.depthNow != 1 || m.flash.text != "level 1" { // one level: the story holds everything
+		t.Errorf("shift+tab from all: level %d, flash %q", m.depthNow, m.flash.text)
+	}
+	res, _ = m.Update(shift)
+	m = res.(model)
+	if m.depthNow != 1 {
+		t.Errorf("shift+tab stops at the roots: level %d", m.depthNow)
+	}
+	lines := strings.Join(listText(m), "\n")
+	if strings.Contains(lines, "front#1") || strings.Contains(lines, "plat-101") || !strings.Contains(lines, "▶") {
+		t.Errorf("level 1 shows the roots folded:\n%s", lines)
+	}
+	res, _ = m.Update(tab)
+	m = res.(model)
+	if m.depthNow != 0 || m.flash.text != "all levels" || !strings.Contains(strings.Join(listText(m), "\n"), "plat-101") {
+		t.Errorf("tab past the deepest level shows everything: level %d, flash %q", m.depthNow, m.flash.text)
+	}
+	res, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	res, _ = res.(model).Update(shift)
+	if res.(model).depthNow != 0 {
+		t.Errorf("with a query shift+tab does nothing")
+	}
+}
+
+// TestHeaderRows: the cursor sits on a stack's header, space folds the
+// stack to it, enter says there is nothing to open, and the preview counts
+// the stack.
+func TestHeaderRows(t *testing.T) {
+	m := treeTestModel(t)
+	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	m = res.(model)
+	if r := m.currentRow(); r == nil || r.kind != rowHeader || r.stack != "alpha" {
+		t.Fatalf("up from the first ticket lands on its stack: %+v", r)
+	}
+	plain := ansi.Strip(m.render())
+	if !strings.Contains(plain, "1 in progress") || !strings.Contains(plain, "1 PRs in review") {
+		t.Errorf("the header's preview counts the stack:\n%s", plain)
+	}
+	res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	m = res.(model)
+	lines := listText(m)
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "▶") || !strings.HasPrefix(lines[1], "▼ beta") {
+		t.Errorf("space folds the stack to its header:\n%s", strings.Join(lines, "\n"))
+	}
+	res, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil || res.(model).flash.text != "nothing to open" || res.(model).openURL != "" {
+		t.Errorf("enter on a header: flash %q", res.(model).flash.text)
+	}
+}
+
+// TestLocalCounters: my PR with a checkout says what it holds that GitHub
+// has not seen, as the prompt counts it, after what it needs.
+func TestLocalCounters(t *testing.T) {
+	m := treeTestModel(t)
+	res, _ := m.Update(localMsg{states: map[string]localState{"https://github.com/acme/front/pull/1": {ahead: 2, unstaged: 3, untracked: 1}}})
+	m = res.(model)
+	if got := ansi.Strip(m.detailLine(m.rows[2], false, 200)); !strings.HasPrefix(got, " │     in review · conflicts · ↑2 !3 ?1 · ") {
+		t.Errorf("details = %q", got)
+	}
+}
+
+// TestShortTitles: the list shows a ticket's short title once there is one,
+// the preview keeps the tracker's with the short one under it, the search
+// finds either, and the Titles option set to original shows the tracker's.
+func TestShortTitles(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	m := treeTestModel(t)
+	m.summBusy = true
+	res, _ := m.Update(summariesMsg{written: summaries{"https://a.example/browse/PLAT-100": {Text: "Arreglar el flujo de login"}}})
+	m = res.(model)
+	if lines := listText(m); !strings.HasPrefix(lines[1], "▌▼ plat-100 Arreglar el flujo de login") {
+		t.Errorf("the short title: %q", lines[1])
+	}
+	if loadSummaries()["https://a.example/browse/PLAT-100"].Text == "" {
+		t.Errorf("the short titles are saved")
+	}
+	if plain := ansi.Strip(m.render()); !strings.Contains(plain, "fix login flow") || !strings.Contains(plain, "≈ Arreglar el flujo de login") {
+		t.Errorf("the preview keeps the tracker's title:\n%s", plain)
+	}
+	for _, q := range []string{"arreglar", "login flow"} {
+		m.ti.SetValue(q)
+		m.applyFilter()
+		if r := m.currentRow(); r == nil || r.kind != rowIssue || r.e.it.Key != "PLAT-100" {
+			t.Errorf("%q finds the story: %+v", q, r)
+		}
+	}
+	m.ti.SetValue("")
+	m.setOption("titles", 1)
+	if lines := strings.Join(listText(m), "\n"); !strings.Contains(lines, "plat-100 fix login flow") {
+		t.Errorf("original titles:\n%s", lines)
 	}
 }
 
 // TestSpaceFolds: space on a ticket folds its PRs and children away and
-// marks it, again unfolds it; on a PR it folds the PR's ticket and the
-// cursor moves there; on a ticket with nothing under it it says so; with a
-// query in the filter it is text.
+// turns its arrow, again unfolds it; on a PR it folds the PR's ticket and
+// the cursor moves there; on a ticket with nothing under it it says so;
+// with a query in the filter it is text.
 func TestSpaceFolds(t *testing.T) {
 	m := treeTestModel(t)
 	space := tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	res, _ := m.Update(space)
 	m = res.(model)
 	lines := strings.Join(listText(m), "\n")
-	if strings.Contains(lines, "front#1") || strings.Contains(lines, "PLAT-101") || !strings.Contains(lines, "▌▸PLAT-100 fix login flow") || m.lines != 6 {
-		t.Errorf("space folds the story, the mark in the gutter:\n%s", lines)
+	if strings.Contains(lines, "front#1") || strings.Contains(lines, "plat-101") || !strings.Contains(lines, "▌▶\uFE0E plat-100 fix login flow") || m.lines != 6 {
+		t.Errorf("space folds the story, its arrow turned:\n%s", lines)
 	}
-	if !strings.Contains(lines, "▌          In Progress") {
-		t.Errorf("the details stay under the title:\n%s", lines)
+	if !strings.Contains(lines, "▌      in progress") {
+		t.Errorf("the details stay, without the guide:\n%s", lines)
 	}
 	res, _ = m.Update(space)
 	m = res.(model)
-	if lines = strings.Join(listText(m), "\n"); !strings.Contains(lines, "front#1") || strings.Contains(lines, "▸") {
+	if lines = strings.Join(listText(m), "\n"); !strings.Contains(lines, "front#1") || strings.Contains(lines, "▶") {
 		t.Errorf("space again unfolds:\n%s", lines)
 	}
 	res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // front#1
@@ -338,7 +532,8 @@ func TestSpaceFolds(t *testing.T) {
 	if r := m.currentRow(); r == nil || r.kind != rowIssue || r.e.it.Key != "PLAT-100" || !r.collapsed {
 		t.Errorf("space on a PR folds its ticket and sits on it: %+v", r)
 	}
-	res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // BETA-7, nothing under it
+	res, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})           // the beta header
+	res, _ = res.(model).Update(tea.KeyPressMsg{Code: tea.KeyDown}) // BETA-7, nothing under it
 	res, cmd := res.(model).Update(space)
 	m = res.(model)
 	if cmd == nil || m.flash.text != "nothing to fold" {
@@ -350,7 +545,7 @@ func TestSpaceFolds(t *testing.T) {
 	if m.ti.Value() != "a " {
 		t.Errorf("with a query space is text: %q", m.ti.Value())
 	}
-	if m.ti.Value() == "a " && !strings.Contains(strings.Join(listText(m), "\n"), "PLAT-101") {
+	if m.ti.Value() == "a " && !strings.Contains(strings.Join(listText(m), "\n"), "plat-101") {
 		t.Errorf("a query shows the folded children")
 	}
 }
@@ -367,7 +562,7 @@ func TestPullsSourceRefreshes(t *testing.T) {
 	res, _ = res.(model).Update(sourceMsg{source: "beta/jira", err: errTest("boom")})
 	m = res.(model)
 	lines := strings.Join(listText(m), "\n")
-	if !strings.Contains(lines, "front#9") || strings.Contains(lines, "front#1") || !strings.Contains(lines, "BETA-7") {
+	if !strings.Contains(lines, "front#9") || strings.Contains(lines, "front#1") || !strings.Contains(lines, "beta-7") {
 		t.Errorf("the fresh PRs replace alpha's, beta keeps its cache:\n%s", lines)
 	}
 	if got := loadCache(); len(got.Pulls) != 1 || got.Pulls[0].Key != "front#9" {
@@ -386,5 +581,20 @@ func TestOldSnapshotNests(t *testing.T) {
 	m := newModel(stacks, issueCache{FetchedAt: time.Now(), Issues: issues}, false)
 	if got := rowKeys(m.rows); got != "H:alpha PLAT-1 >PLAT-2" {
 		t.Errorf("rows = %s", got)
+	}
+}
+
+// TestShortTitlesFailure: a summarizer that fails says so on the help line
+// once; one that is not installed says nothing.
+func TestShortTitlesFailure(t *testing.T) {
+	m := treeTestModel(t)
+	m.summBusy = true
+	res, _ := m.Update(summariesMsg{err: errNoSummarizer})
+	if got := res.(model); got.netErr != "" || got.summBusy {
+		t.Errorf("a missing summarizer is quiet: %q", got.netErr)
+	}
+	res, _ = m.Update(summariesMsg{err: errTest("credit too low")})
+	if got := res.(model); got.netErr != "short titles: credit too low" {
+		t.Errorf("a failure takes the help line: %q", got.netErr)
 	}
 }

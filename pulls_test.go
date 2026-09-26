@@ -50,7 +50,8 @@ func TestPullsFetchSearchesAndMaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"", qOpen, qOpen + " @c1", qMerged, qAsked}; strings.Join(*asked, "|") != strings.Join(want, "|") {
+	// The viewer and the compare query of the open PRs go without a q.
+	if want := []string{"", qOpen, qOpen + " @c1", qMerged, qAsked, ""}; strings.Join(*asked, "|") != strings.Join(want, "|") {
 		t.Errorf("queries = %q, want %q", *asked, want)
 	}
 	var lines []string

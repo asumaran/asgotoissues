@@ -258,7 +258,7 @@ func testEntries() []*entry {
 
 func TestBuildRowsGroupsByStack(t *testing.T) {
 	entries := testEntries()
-	s, k, m := corpora(entries)
+	s, k, m := corpora(entries, trackerTitle)
 	rows := testRows(entries, "", s, k, m)
 	kinds := []string{}
 	for _, r := range rows {
@@ -276,7 +276,7 @@ func TestBuildRowsGroupsByStack(t *testing.T) {
 
 func TestRankingPrefersExactKeyAndNumber(t *testing.T) {
 	entries := testEntries()
-	s, k, m := corpora(entries)
+	s, k, m := corpora(entries, trackerTitle)
 	for q, want := range map[string]string{
 		"2098":      "PLAT-2098",
 		"plat-2099": "PLAT-2099",
@@ -302,7 +302,7 @@ func TestRankingPrefersExactKeyAndNumber(t *testing.T) {
 
 func TestNavigationSkipsHeaders(t *testing.T) {
 	entries := testEntries()
-	s, k, m := corpora(entries)
+	s, k, m := corpora(entries, trackerTitle)
 	rows := testRows(entries, "", s, k, m)
 	cur := firstIssue(rows)
 	if rows[cur].e.it.Key != "PLAT-2099" {
@@ -338,7 +338,7 @@ func TestFilteringRanksRowsAndTheirStacks(t *testing.T) {
 		{Key: "WORK-3", Stack: "work", Summary: "Site TV indexable"},
 		{Key: "HOME-1", Stack: "home", Summary: "Make the docs indexable by search"},
 	})
-	s, k, m := corpora(entries)
+	s, k, m := corpora(entries, trackerTitle)
 	var got []string
 	for _, r := range testRows(entries, "indexable", s, k, m) {
 		if r.kind == "header" {
@@ -383,12 +383,13 @@ func dumpInputs(t *testing.T) ([]stack, issueCache) {
 func TestRunDump(t *testing.T) {
 	stacks, cache := dumpInputs(t)
 	var out bytes.Buffer
-	runDump(&out, stacks, cache, false, "", "", "")
+	runDump(&out, stacks, cache, false, "", "", "", false)
 	got := out.String()
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
-	// 3 summary lines, 2 trackers, the order, 2 stack headers, 3 tickets.
-	if len(lines) != 11 {
-		t.Fatalf("got %d lines, want 11:\n%s", len(lines), got)
+	// 3 summary lines, 2 trackers, the order, 2 stack headers, 3 tickets of
+	// two lines each.
+	if len(lines) != 14 {
+		t.Fatalf("got %d lines, want 14:\n%s", len(lines), got)
 	}
 	if lines[0] != "config: "+configPath() {
 		t.Errorf("first line %q, want the config path", lines[0])
@@ -396,16 +397,16 @@ func TestRunDump(t *testing.T) {
 	if !strings.HasPrefix(lines[1], "cache: 3 issues, 0 PRs, fetched ") || lines[2] != "stacks: 2" {
 		t.Errorf("summary %q, want the cache and the stacks", lines[1:3])
 	}
-	if lines[5] != "order: created" || lines[6] != "dh" || lines[9] != "mo" {
-		t.Errorf("order %q, stack headers %q and %q, want created, dh and mo", lines[5], lines[6], lines[9])
+	if lines[5] != "order: created" || lines[6] != "▼ dh" || lines[11] != "▼ mo" {
+		t.Errorf("order %q, stack headers %q and %q, want created, dh and mo", lines[5], lines[6], lines[11])
 	}
 	for _, e := range testEntries() {
-		if n := strings.Count(got, e.it.Key+" "); n != 1 {
+		if n := strings.Count(got, strings.ToLower(e.it.Key)+" "); n != 1 {
 			t.Errorf("%s is listed %d times, want once:\n%s", e.it.Key, n, got)
 		}
 	}
-	if want := "  PLAT-2099 [UAT] Task: Audit: enforce authz (updated "; !strings.HasPrefix(lines[7], want) {
-		t.Errorf("ticket row %q, want it to start with %q", lines[7], want)
+	if lines[7] != "   plat-2099 Audit: enforce authz" || !strings.HasPrefix(lines[8], "       uat · ") {
+		t.Errorf("ticket rows %q, want the key and the title, then the status", lines[7:9])
 	}
 }
 
@@ -414,7 +415,7 @@ func TestRunDump(t *testing.T) {
 func TestRunDumpQuery(t *testing.T) {
 	stacks, cache := dumpInputs(t)
 	var out bytes.Buffer
-	runDump(&out, stacks, cache, false, "boundary audit", "", "")
+	runDump(&out, stacks, cache, false, "boundary audit", "", "", false)
 	got := out.String()
 	_, matches, ok := strings.Cut(got, "query \"boundary audit\":\n")
 	if !ok {
@@ -425,7 +426,7 @@ func TestRunDumpQuery(t *testing.T) {
 	}
 
 	out.Reset()
-	runDump(&out, stacks, cache, false, "audit", "", "")
+	runDump(&out, stacks, cache, false, "audit", "", "", false)
 	got = out.String()
 	_, matches, _ = strings.Cut(got, "query \"audit\":\n")
 	lines := strings.Split(strings.TrimRight(matches, "\n"), "\n")
@@ -455,7 +456,7 @@ func TestRunDumpQuery(t *testing.T) {
 // testRows is buildRows with no PRs and the default options: the rows of a
 // list of tickets alone.
 func testRows(entries []*entry, q string, summaries, keys, metas []string) []row {
-	return buildRows(entries, nil, nil, orderCreated, prsAll, false, nil, q, summaries, keys, metas)
+	return buildRows(entries, nil, nil, opts(orderCreated, prsAll, false, nil), q, summaries, keys, metas)
 }
 
 // TestRunDumpTree: -dump prints the tree: the indent, a ghost marked, what
@@ -469,27 +470,27 @@ func TestRunDumpTree(t *testing.T) {
 	stacks := []stack{{Name: "work", Trackers: []string{kindJira}, Orgs: []string{"me"}, BaseURL: "https://w"}, {Name: "home", Trackers: []string{kindGitHub}, Orgs: []string{"me"}}}
 	cache := issueCache{FetchedAt: time.Now(), Issues: treeIssues(), Pulls: treePulls()}
 	var out bytes.Buffer
-	runDump(&out, stacks, cache, false, "", "", "")
+	runDump(&out, stacks, cache, false, "", "", "", false)
 	got := out.String()
 	for _, want := range []string{
 		"cache: 6 issues, 7 PRs, fetched ",
 		"  work             pulls  me\n",
 		"order: key\n",
-		"  W-10 [In Progress] jira: story",
-		"  W-1 [Open] jira: epic (updated ",
-		") (not in your list) · conflicts · approved\n",
-		"      ↳ front#1 [open] conflicts: one\n",
-		"      ↳ infra#2 [merged] merged: two\n",
-		"  W-12 [Blocked] jira: alone (updated ",
-		") · all merged\n",
-		"  PRs without a ticket\n    ↳ front#4 [open]: four\n",
+		"▼ work\n ▼ w-1 epic\n │     open · not yours · ",
+		" └── ▼ w-10 story\n     │     in progress · ",
+		"     │   ○ front#3 three\n     │     approved · ",
+		"     └── ▼ w-11 sub-task\n               open · ",
+		"             ○ front#1 one\n               in review · conflicts · ",
+		"             ○ infra#2 two\n               merged · ",
+		" ▼ w-12 alone\n       blocked · ",
+		" ▼ PRs without a ticket\n     ○ front#4 four\n       in review · ",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("dump lacks %q:\n%s", want, got)
 		}
 	}
 	out.Reset()
-	runDump(&out, stacks, cache, false, "", "", "attention")
+	runDump(&out, stacks, cache, false, "", "", "attention", false)
 	if !strings.Contains(out.String(), "order: attention\n") || loadSetting(stateDir(), "order") != "key" {
 		t.Errorf("-order is used and not saved:\n%s", out.String())
 	}

@@ -28,10 +28,11 @@ for the config. The charm v2 modules are imported under their canonical
 spelling is rejected by `go get`).
 Files are split by concern but everything stays in `package main`:
 
-- `main.go`: flags (`-version`, `-dump`, `-query`, `-show`, `-order`), model
-  construction, `tea.NewProgram`, post-quit browser open, `runDump` (it writes
-  to an `io.Writer`, so the tests read what `-dump` prints: the tree, with
-  the glyphs, the indent, the ghosts marked and the PRs with their flags).
+- `main.go`: flags (`-version`, `-dump`, `-query`, `-show`, `-order`,
+  `-summarize`), model construction, `tea.NewProgram`, post-quit browser
+  open, `runDump` (it writes to an `io.Writer`, so the tests read what
+  `-dump` prints: the list as the popup draws it, every ticket and PR, in
+  plain text, with the local counters read synchronously), `summarizeAll`.
 - `config.go`: front-matter extraction from `asdev.local.md`, stack parsing
   (config order preserved via a `yaml.Node` walk), which trackers a stack
   lists (`issues:`), netrc + env credentials for Jira.
@@ -50,21 +51,45 @@ Files are split by concern but everything stays in `package main`:
   (`ghRun`, in `ghrun.go`, is the seam tests replace; `ghSearch` pages any
   node type), issue mapping, state from labels, the parent and the parent's
   parent nested in the query and turned into ghosts.
-- `pull.go`: the `pull` struct (the cache's format for a PR), `flags` (what a
-  PR needs, in the order the row shows them, and its level), `pullRefs` (the
-  tickets and issues a PR names: strong in the branch, the title and the
-  closing references, weak in the body).
+- `pull.go`: the `pull` struct (the cache's format for a PR), what its row
+  says about it, each word with a level (attention) and a tone (its color):
+  `state` (merged, closed, draft, changes requested, approved, in review),
+  `needs` (conflicts, ci failed, to answer, base merged, review requested)
+  and `facts` (behind <base>, stacked on #N, ci pending, by author);
+  `attention` is the worst of them. `pullRefs` (the tickets and issues a PR
+  names: strong in the branch, the title and the closing references, weak
+  in the body).
 - `pulls.go`: the pulls source: three searches per stack under its owners
   (open PRs I am involved in, my PRs merged in the last 30 days, and the
   URLs of the PRs whose review is asked of me), the viewer's login for
-  `Mine`, node mapping, `carryMergeable` (a merge state GitHub has not
-  computed yet keeps the cached one while the branches did not move).
-- `tree.go`: the list as a tree: `linkPulls` (a PR under every ticket of its
-  stack it names), `buildTree` (nesting by the parent's URL, PR rows under
-  their ticket, the group of my PRs without a ticket, the query walk that
-  keeps the ancestors of a hit), the order modes and the PRs modes,
-  `ownAttention` (a ticket's level: the worst of its PRs and, in the tree,
-  its descendants).
+  `Mine`, node mapping (`ToAnswer`: a review thread not resolved whose last
+  comment is not mine), `ghBehind` (how many commits of its base an open PR
+  lacks: `compare(headRef:)` takes the head as an argument, so one aliased
+  query per chunk of PRs after the searches; its failure leaves zero),
+  `carryMergeable` (a merge state GitHub has not computed yet keeps the
+  cached one while the branches did not move).
+- `tree.go`: the list as a tree: `linkPulls` (a PR under every ticket of
+  its stack it names), `grow` (the forest: nesting by the parent's URL,
+  each node settled: its own level, `done`, `shown` under the show mode,
+  its best score), `buildTree` (the rows: the guides of every row, PR rows
+  under their ticket, the group of my PRs without a ticket, the query walk
+  that keeps the ancestors of a hit, folded tickets, groups and stacks),
+  `buildPhase` (the phase view), `foldLevel`/`deepest` (the folds of a
+  level), the show, group, order and PRs modes, `ownLevel` (a ticket's
+  level: its own PRs', nothing inherited).
+- `local.go`: the local work on my open PRs: their checkouts under the
+  roots (`ASGOTOISSUES_CHECKOUTS`, else `~/Developer`: each repo's
+  worktrees, matched by the origin's owner/repo and the branch), read as
+  the prompt counts them (`↑` commits on top of the PR's head, `+`
+  staged, `!` unstaged, `?` untracked), in the background; `gitRun` is the
+  seam the tests replace.
+- `summary.go`: the short Spanish titles: `summaries.json` (by URL, with a
+  hash of the title, the start of the body and the parent's summary),
+  `pendingSummaries` (per stack, parents first, the summarized ancestors as
+  context), the prompt, `summarize` (the CLI's JSON envelope or a bare
+  array), `settleHashes`, the `Titles` option; `summarizeRun` runs
+  `claude -p` with Haiku (`ASGOTOISSUES_SUMMARIZER` replaces it) and is
+  the seam the tests replace.
 - `setting.go`: `loadSetting`/`saveSetting`: a setting the tool remembers
   between runs, one plain-text file each in the state dir. The same file in
   every tool of the family that needs it.
@@ -73,9 +98,11 @@ Files are split by concern but everything stays in `package main`:
 - `cache.go`: `issuecache.json` (issues and pulls) load/save (through
   `jsonfile.go`), 60s freshness debounce, and `stateDir()`, a wrapper over
   `stateDirFor` (`statedir.go`).
-- `filter.go`: entries (a ticket and its PRs), the row kinds, corpora, fuzzy
-  hits, `matchBonus` ranking; `buildRows` scores the hits and hands them to
-  the tree.
+- `filter.go`: entries (a ticket and its PRs), the row kinds (header,
+  group, section, issue, pull) and what a row carries to be drawn (its
+  guides, its path by phase), corpora (the title the row shows first, the
+  tracker's with the metadata), fuzzy hits, `matchBonus` ranking;
+  `buildRows` scores the hits and hands them to the tree.
 - `match.go`: `findTight`/`tighten`, the fuzzy matcher with one correction: it
   is greedy (first candidate for each rune, left to right), so a query that
   occurs in one piece could still match scattered letters before it. When the
@@ -193,14 +220,17 @@ Files are split by concern but everything stays in `package main`:
   section). Copied, not imported, like `frame.go`: the same file ships in
   asgotopr, asgotonotes, asgotosession and asgotochanged.
 - `ui.go`: the bubbletea model/Update/View, styles, the options (`order`,
-  `prs`) and the rows (a glyph, the indent, the key, the flags of a PR). The
-  browser is opened from `main.go` after the TUI quits (`openURL`,
+  `prs`, `show`, `group`, `rows`, `titles`), folding (`fold`, `foldTo`) and
+  the rows (`lead`: the gutter, the guides, the branch, the arrow or the
+  bullet; the key in its level's color; the title faint; `detailWords`).
+  The browser is opened from `main.go` after the TUI quits (`openURL`,
   `openurl.go`).
 - `preview.go`: glamour rendering as a `tea.Cmd`, per-(URL,width,updated)
-  render cache, the instant non-glamour headers of a ticket (with its parent
-  and whether every PR is merged) and of a PR (where it is, what it needs,
-  the review, checks and merge facts); `rightColumn` puts one blank line
-  under the header and `syncPreviewHeight` fits the body under it.
+  render cache, the instant non-glamour headers of a ticket (its title, the
+  short one under it, its parent) and of a PR (where it is, its state and
+  what it needs, the review, checks and merge facts), and of a stack, group
+  or section (the counts the list leaves out); `rightColumn` puts one blank
+  line under the header and `syncPreviewHeight` fits the body under it.
 
 ## Build & run
 
@@ -210,6 +240,7 @@ go build -o asgotoissues .    # plugin runs ./asgotoissues from the repo root
 ./asgotoissues -dump -query x # the matches and their scores instead of the list
 ./asgotoissues -dump -show KEY # prints the wiki → Markdown conversion of KEY
 ./asgotoissues -dump -order attention # the tree in that order (created, updated, key, attention); not saved
+./asgotoissues -dump -summarize # write the missing short titles first (runs claude -p)
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 + pyte)
 herdr plugin link "$PWD"   # link does NOT run [[build]]; go build yourself
@@ -264,12 +295,13 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   message takes the help line's place (`footLine`): a flash for a moment (a
   confirmation in green, a key that could do nothing in the error color),
   else an error or a notice in the error color.
-  The options are the order of every level of the tree (`Order`, also cycled
-  by `ctrl+s`, which names the next one on its key), which PR rows show
-  (`PRs`: all, open, attention), how many lines a row takes (`Rows`: two
-  lines, one line) and whether the merged work shows (`Merged`: show,
-  hide); each is saved as a setting (`setting.go`) and the help line says
-  `f1 options`.
+  The options are the order of every level of the tree (`Order`, also
+  cycled by `ctrl+s`, which names the next one on its key), which PR rows
+  show (`PRs`: all, open, attention), what the list lists (`Show`: working,
+  pending, all; `ctrl+t`), how (`Group`: tree, phase; `ctrl+g`), how many
+  lines a row takes (`Rows`: two lines, one line) and which titles it shows
+  (`Titles`: short, original); each is saved as a setting (`setting.go`) and
+  the help line says `f1 options`.
 - **Filter matches** look the same in every tool of the family and come from
   one place, `highlight.go` (the same file in each repo; it also owns `stSel`
   and `stMatch`): a match is the match color plus an underline on top of the
@@ -295,10 +327,10 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   sub-issue's parent. A parent that is not in the user's list (an epic
   assigned to someone else, a Done one) is fetched as a **ghost** (Jira: one
   `key in (…)` request per level, three at most; GitHub: the parent's parent
-  nested in the query): a whole issue with `ghost: true`, dim in the list,
-  selectable, its preview says `not in your list`, never counted. A ghost
-  sorts by the newest of its subtree, so an old epic sits with the work
-  under it. A parent that is its own descendant stays a root.
+  nested in the query): a whole issue with `ghost: true`, a row like any
+  other whose details say `not yours`, selectable, its preview says `not in
+  your list`, never counted. A ghost sorts by the newest of its subtree, so
+  an old epic sits with the work under it (its age is its own). A parent that is its own descendant stays a root.
 - **PRs come from GitHub and are linked locally** (`pulls.go`, `linkPulls`).
   Every stack with `github.org`/`orgs` has a pulls source, whether or not
   its `issues:` lists GitHub (a Jira stack's PRs live in its org). Three
@@ -320,93 +352,113 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   close their stack under `PRs without a ticket`; other people's are dropped.
   A GraphQL response with errors is still read (`ghSearch`): a field that
   fails on one node must not kill the source.
-- **What a PR needs** (`pull.flags`), derived from the fetched fields, never
-  cached: `merged` and `closed` (dim) stop everything else; `conflicts`
-  (`CONFLICTING` or merge state `DIRTY`), `changes requested`, `ci failed`,
-  `base merged` (a stacked PR whose base branch is the head of a merged PR)
-  are bad on my PR and a warning on someone else's; `review requested` is
-  bad whoever's PR it is; `behind base` (merge state `BEHIND`, the base
-  moved) and `ci pending` warn; `on #N` (stacked on an open PR) and `draft`
-  say so; `approved` (ok, ready to merge) only when nothing blocks it and no
-  check runs; `awaiting review` (warn) with `REVIEW_REQUIRED` or reviewers
-  pending, never on a draft, never on a PR with no rule and no request (a
-  personal repo must not read as waiting forever). Levels: bad 3 > ok 2 >
-  warn 1 > none 0. A ticket's level (`ownAttention`, then the tree) is the
-  worst of its PRs and its descendants' (`needs`: their flags that say
-  something, once each, worst first, `mergeNeeds`), a blocked ticket without
-  a PR is a warning, and a ticket whose every PR is merged reads `all
-  merged` (ok: move it). The level orders the list (`attention`); the
-  words are what the list shows. `mergeable`/`mergeStateStatus` `UNKNOWN` (GitHub computes them
-  lazily) keep the cached values while `headRefOid`/`baseRefOid` did not
-  move (`carryMergeable`).
-- **Rows** (`rowLines`, `rowLine`, `pullLine`, `detailLine`): every
-  selectable row starts with the gutter (two cells: the cursor's mark on the
-  selected one), then the indent; the title comes last on its line, so it
-  is what a narrow list cuts. There is no glyph column: what a row needs is
-  said in words, in its details line (a ticket's collects its PRs' and its
-  descendants'), so nothing has to be decoded. **The list is two tones**
-  (`stDetail`, `stDetailSel`): a row's first line is plain (the key, the
-  status and the flags carry no color there), its details line is dim, and
-  under the selection the details are a lighter grey (color 7) over the
-  background, because the dim tone is the background's own color and would
-  vanish. The state and level colors belong to the preview header
-  (`stateStyle`, `levelStyle`, `flagsLine`), not to the list. A ghost or a
-  context row is dim on its first line too: it is not mine, or not a hit. The indent is the tree's own
-  (`row.col`): a child row, a PR or a child ticket, starts where its
-  parent's title starts (one space past the parent's key, from wherever the
-  parent is set in), so a ticket, its details, its PRs and its children
-  share one left edge. By default a ticket or a PR takes
-  **two lines** (`rowsMode`, the `Rows` option): the title on the first, its
-  details dim under it, so the titles and the glyphs stay what the eye
-  scans. A ticket: `<indent><key> <summary>` (one space between
-  the key and the summary, no shared key column; the key is one color for
-  every ticket, `stKey`, dim for a ghost or a context row: the state is said
-  in words, never by the key's color), then, aligned under the summary (one
-  space past the key), `<status> · <type> · updated <age> · <not in your
-  list> · <N PRs> · <all merged> · <needs>`. A PR: `<indent>↳ <repo#N>
-  <title>`, then, under the title, `open · <flags> · by <author, when not
-  me> · <age>`, the repo always in the key
-  (`owner/repo#N` when two
-  owners share a name, the rule of `qualifyClashingKeys`), the key in the
-  match style when the query is in it or in the branch. With one-line rows
-  a ticket is `<indent><key> [<status>] <summary>` (what its PRs need is on
-  their rows) and a PR `<indent>↳ <repo#N> <flags · joined> <title>`.
-  Headers and
-  the group line always take one line. The list is drawn in lines and the
-  rows know theirs (`lineOf`, `lines`): `ensureVisible` keeps the cursor's
-  lines in view (`scrollSpan`, `listnav.go`), a click on either line selects
-  the row (`rowOfLine`, `listmouse.go`), a page is a page of rows, and the
-  selection covers both lines. `-dump` prints the same words after a
-  ticket's line. The preview header's height varies (a PR has
-  more facts); `syncPreviewHeight` fits the body under it on every selection
-  change and resize.
+- **What a PR says** (`pull.go`), derived from the fetched fields, never
+  cached: its **state** (`merged` green, `closed` and `draft` dim,
+  `changes requested` red, `approved` green, else `in review` yellow),
+  what it **needs** (`conflicts`, `ci failed`, `base merged`: a stacked PR
+  whose base branch is the head of a merged PR; red on my PR, yellow on
+  someone else's; `to answer`, on my PR, a review thread not resolved whose
+  last comment is not mine; `review requested`, of me, red whoever's PR it
+  is), and the **facts**, dim (`behind <base>`: the head lacks commits of
+  its base, yellow when the repo requires an up-to-date branch,
+  `mergeStateStatus BEHIND`; `stacked on #N`: its base is the head of that
+  open PR; `ci pending`; `by <author>` when it is not me). No counts: the
+  user wants to know that a branch is behind or a review waits, not how
+  much. Levels, for the `attention` order: bad 3 > ok 2 > warn 1 > none 0;
+  an approval is ok only while nothing blocks it and no check runs, a PR
+  that waits for a review is a warning. **Nothing is inherited**: a
+  ticket's level is its own PRs' (`ownLevel`), and a blocked ticket of mine
+  without a PR is a warning; a parent never says what its children or
+  their PRs need, the rows under it do. `mergeable`/`mergeStateStatus`
+  `UNKNOWN` (GitHub computes them lazily) keep the cached values while
+  `headRefOid`/`baseRefOid` did not move (`carryMergeable`).
+- **Local work** (`local.go`): my open PRs with a checkout on this machine
+  say what it holds that GitHub has not seen, as the shell prompt and
+  Claude Code's statusline count it, each hidden at zero: `↑n` (commits on
+  top of the PR's head, 256-color 212), `+n` staged (84), `!n` unstaged
+  (228), `?n` untracked (245), after what the PR needs. Only the PR's row
+  says them.
+- **Rows** (`rowLines`, `rowLine`, `lead`, `detailLine`, `detailWords`):
+  a tree drawn as Textual's (harlequin's catalog): a ticket at depth d has
+  its fold arrow (`▼`, `▶` folded, written with U+FE0E so no terminal
+  makes it an emoji) at `1 + 4·d` and its key two cells after it; a child
+  ticket hangs from its parent's arrow on a branch (`├── ▼ key`, `└──` for
+  the last sibling ticket), a leaf's branch runs on through the arrow's
+  place (`├──── key`) so the keys of siblings line up; a `│` runs down from
+  a ticket's arrow to its sub-tickets and between siblings. A ticket's
+  details line and everything it holds start 4 cells past its key: its
+  PRs are not branches but the items of its list, `○ repo#N title`, the
+  `○` in its sub-tickets' arrow column, their details under their key. The
+  first line: the key in lower case in its level's color (ANSI 5, 4,
+  256-color 216, 183 from level 3 on; a PR's ANSI 14), the title (the
+  short one, `summary.go`, when there is one) faint. The details, most
+  important first and the age last: a ticket's status (lower case, green
+  in progress, red blocked, blue to do, faint; a GitHub issue's from its
+  labels), `no PR` (a started ticket of mine with neither PRs nor
+  children), `not yours` (a ghost), the age of its last activity (its own
+  update or its PRs', `today`, else `3d`, `2w`); a PR's state, needs,
+  local counters, facts, age. Dim words are ANSI 8, and 7 over the
+  selection. **No bold anywhere in the list**, the selection included
+  (`stRowSel`). A context row (an ancestor listed for a hit) is dim. With
+  one-line rows the details go between the key and the title. The list is
+  drawn in lines and the rows know theirs (`lineOf`, `lines`):
+  `ensureVisible` keeps the cursor's lines in view (`scrollSpan`,
+  `listnav.go`), a click on either line selects the row (`rowOfLine`,
+  `listmouse.go`), a page is a page of rows. `-dump` prints the same lines.
+  The preview header's height varies; `syncPreviewHeight` fits the body
+  under it on every selection change and resize.
 - **Order** is a panel option and `ctrl+s` (`orderMode`): every level of
   the tree independently. `created` (default: newest first, `newerIssue`),
-  `updated` desc, `key` (project, then number asc), `attention` (level desc,
+  `updated` desc (the last activity, a ticket's PRs' included), `key`
+  (project, then number asc), `attention` (its own level desc,
   then blocked, doing, to do, then updated desc). Ties keep the fetched
   order; a saved value that is none of them reads as `created`; with a query
   the scores decide instead. A ticket's PR rows come before its child
   tickets, open before merged, newest activity first, always. `-dump -order`
   beats the saved setting and never writes it.
 - **PRs option** (`prsMode`): `all`, `open` (merged rows hidden),
-  `attention` (only PRs with a bad or warn flag).
+  `attention` (only PRs at warn or worse).
 - **Rows option** (`rowsMode`): `two` (default) or `one` line per ticket or
-  PR; the one-line list holds twice the rows of a popup, the two-line one
-  loses no title.
-- **Folding** (`fold`, `m.collapsed`): `space` on a ticket, while the filter
-  is empty (with text in it space is text, like `q`), folds its PRs and
-  children away and marks it with `▸` in the gutter (the cell before the
-  indent, so the key and the details stay put); space again unfolds it. On a PR row it folds the PR's
-  ticket and the cursor moves there. A ticket with nothing under it flashes
-  `nothing to fold`. Folds are by URL, for the run only, and a query shows
-  everything (a search never hides a hit). A folded ticket still carries
-  what its hidden PRs and children need.
-- **Merged option** (`hideMerged`, saved as `merged`: `show`/`hide`): hide
-  leaves out the merged PR rows everywhere and the tickets with nothing
-  left under them (`node.done`: every PR merged, or none on a ghost, and
-  every child done), so the list is the work that is not finished. A hidden
-  ticket does not answer a query either. The counter still counts it in the
-  total (`2/3`). `-dump` shows everything.
+  PR.
+- **Show option** (`showMode`, saved as `show`, `ctrl+t`): `working`
+  (default: a ticket in progress or with an open PR, a parent only as the
+  container of children it lists, and the open PRs), `pending` (everything
+  not finished: merged PRs and tickets with nothing left under them out)
+  and `all`. It replaced `Merged: show | hide`: a saved `merged=hide` reads
+  as pending. The counter still counts every ticket in the total.
+- **Group option** (`groupMode`, saved as `group`, `ctrl+g`): `tree` or
+  `phase` (`buildPhase`): per stack, a section per PR state (`PR in
+  review`, `draft PR`, `PRs merged`) with one row per PR (a PR under two
+  tickets once per ticket) carrying the path of its tickets (`shop-51 ›
+  shop-62 › web-app#7811`, each key in its level's color), and
+  `no PR` with my tickets that have neither PRs nor children; its details
+  add the status of the PR's ticket. Empty sections are left out; the
+  show mode, the PRs mode and a query apply.
+- **Folding** (`fold`, `foldTo`, `m.collapsed` by `foldKey`): `space`, while
+  the filter is empty (with text in it space is text), folds the row under
+  the cursor: a ticket (its PRs and children), a stack to its header, the
+  group of PRs without a ticket, a phase section; on a PR its ticket (by
+  phase, its section) and the cursor moves there; a row with nothing under
+  it flashes `nothing to fold`. The headers, groups and sections are
+  selectable for this (`enter` flashes `nothing to open`, `ctrl+y`
+  `nothing to copy`); their preview counts the stack's tickets by state
+  and its PRs by phase. `shift+tab` folds the tree a level shallower (all,
+  then the deepest level, down to the roots alone), `tab` a level deeper
+  and back to all (`foldLevel`, `deepest`): a level replaces the folds made
+  by hand (a folded stack stays); it flashes `level N`. Folds are for the
+  run only, and a query shows everything (a search never hides a hit).
+- **Short titles** (`summary.go`, `Titles: short | original`): one plain
+  Spanish sentence of 6 to 14 words per ticket and per PR, written by Haiku
+  through `claude -p` in the background, a child as a part of its parent's
+  goal (the request goes per stack as the tree, the summarized ancestors as
+  read-only context), cached in `summaries.json` by URL with the hash of
+  what it was written from (a child's includes its parent's summary). Until
+  one arrives, or when the CLI fails (the error takes the help line once;
+  a CLI that is not installed says nothing),
+  the row shows the tracker's title; `original` never calls the CLI. Both
+  titles are searched; the preview keeps the tracker's with the short one
+  under it (`≈`). It sends titles and the start of bodies to Anthropic
+  through the user's Claude Code account.
 - **Providers**: a tracker is a `provider` that returns normalized `issue`s.
   Whatever is tracker-specific is settled at fetch time and stored on the
   issue: `State` (todo, doing, blocked) drives the colors, `Meta` holds the
@@ -515,11 +567,18 @@ merge fallback per source, the GitHub and pulls providers against a fake
 GraphQL document: a live `-dump` against a stale, isolated state dir is the
 check that the queries are accepted), the Jira ghosts against an `httptest`
 server, issues cached by older versions, wiki conversion, the references
-and flags of a PR, linking, the tree (nesting, ghosts, the query walk, the
-order and PRs modes, attention), ranking, grouping, key handling, partial
-refresh failure, View content). `TestMain` points `HERDR_PLUGIN_STATE_DIR`
-at a temp dir so tests never touch the real cache; a test that presses a
-key under the panel or saves a setting takes a temp dir of its own.
+and the state, needs and facts of a PR, linking, the tree (nesting,
+ghosts, the query walk, the order, PRs and show modes, the guides, the
+phase view, the folds of a level, own levels), the local counters against
+a fake `gitRun`, the short titles against a fake `summarizeRun` (the
+batches, the hashes, the answers the CLI gives), ranking, grouping, key
+handling, partial refresh failure, View content: the rows as drawn, their
+colors, no bold). `TestMain` points `HERDR_PLUGIN_STATE_DIR` at a temp dir
+so tests never touch the real cache, `ASGOTOISSUES_CHECKOUTS` at it too so
+no real checkout is read, turns the summarizer off and lists everything
+(`defaultShow`); a test that presses a key under the panel or saves a
+setting takes a temp dir of its own. The pty sandbox saves `show=all` and
+`titles=original` and sets `ASGOTOISSUES_NO_SUMMARIES`.
 
 For end-to-end verification without a TTY, `scripts/pty-check.py ./asgotoissues`
 (python3 + `pyte`) spawns the binary on a pty, answers the terminal queries,

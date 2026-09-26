@@ -102,7 +102,7 @@ func TestLinkPulls(t *testing.T) {
 // stack nests the same way.
 func TestBuildTreeNests(t *testing.T) {
 	entries, pulls, unlinked := treeModel()
-	rows := buildTree(entries, pulls, unlinked, orderCreated, prsAll, false, nil, nil)
+	rows := buildTree(entries, pulls, unlinked, opts(orderCreated, prsAll, false, nil), nil)
 	want := "H:work W-12 >↳infra#2 W-1 >W-10 >>↳front#3 >>W-11 >>>↳front#1 >>>↳infra#2 G >↳front#4 H:home app#2 >app#5 >>↳app#6"
 	if got := rowKeys(rows); got != want {
 		t.Errorf("rows = %s\nwant   %s", got, want)
@@ -119,37 +119,50 @@ func TestBuildTreeNests(t *testing.T) {
 			ids[r.id()] = true
 		}
 	}
-	if len(ids) != 12 {
+	if len(ids) != 15 { // 12 tickets and PRs, 2 stacks, 1 group
 		t.Errorf("%d distinct ids, want every selectable row its own", len(ids))
 	}
 }
 
-// TestBuildTreeAttention: a ticket's level is the worst of its PRs and its
-// descendants', a blocked ticket without one is a warning, and every PR
-// merged reads as done.
+// TestBuildTreeAttention: a ticket's level is the worst of its own PRs,
+// nothing inherited from its children; a blocked ticket without a PR is a
+// warning; noPR marks a started ticket of mine with neither PRs nor
+// children.
 func TestBuildTreeAttention(t *testing.T) {
 	entries, pulls, unlinked := treeModel()
-	rows := buildTree(entries, pulls, unlinked, orderCreated, prsAll, false, nil, nil)
+	rows := buildTree(entries, pulls, unlinked, opts(orderCreated, prsAll, false, nil), nil)
 	lvl := map[string]int{}
-	merged := map[string]bool{}
 	for _, r := range rows {
 		if r.kind == rowIssue {
 			lvl[r.e.it.Key] = r.level
-			merged[r.e.it.Key] = r.merged
 		}
 	}
-	for key, want := range map[string]int{"W-11": levelBad, "W-10": levelBad, "W-1": levelBad, "W-12": levelOK, "app#5": levelNone, "app#2": levelNone} {
+	for key, want := range map[string]int{"W-11": levelBad, "W-10": levelOK, "W-1": levelNone, "W-12": levelNone, "app#5": levelNone, "app#2": levelNone} {
 		if lvl[key] != want {
 			t.Errorf("%s level = %d, want %d", key, lvl[key], want)
 		}
 	}
-	if !merged["W-12"] || merged["W-11"] {
-		t.Errorf("all merged: W-12 %v, W-11 %v", merged["W-12"], merged["W-11"])
+	alone := buildEntries([]issue{
+		{Key: "B-1", Stack: "s", URL: "b1", State: stateBlocked},
+		{Key: "B-2", Stack: "s", URL: "b2", State: stateDoing},
+		{Key: "B-3", Stack: "s", URL: "b3"},
+		{Key: "B-4", Stack: "s", URL: "b4", State: stateDoing},
+		{Key: "B-5", Stack: "s", URL: "b5", ParentURL: "b4"},
+	})
+	rows = buildTree(alone, nil, nil, opts(orderKey, prsAll, false, nil), nil)
+	got := map[string]row{}
+	for _, r := range rows {
+		if r.kind == rowIssue {
+			got[r.e.it.Key] = r
+		}
 	}
-	// A blocked ticket without a PR is a warning.
-	alone := buildEntries([]issue{{Key: "B-1", Stack: "s", URL: "b1", State: stateBlocked}})
-	if rows := buildTree(alone, nil, nil, orderCreated, prsAll, false, nil, nil); rows[1].level != levelWarn {
-		t.Errorf("blocked without a PR: level %d", rows[1].level)
+	if got["B-1"].level != levelWarn {
+		t.Errorf("blocked without a PR: level %d", got["B-1"].level)
+	}
+	for key, want := range map[string]bool{"B-1": true, "B-2": true, "B-3": false, "B-4": false} {
+		if got[key].noPR != want {
+			t.Errorf("%s noPR = %v, want %v (started, no PR, no children)", key, got[key].noPR, want)
+		}
 	}
 }
 
@@ -159,7 +172,7 @@ func TestOrderModes(t *testing.T) {
 	entries, pulls, unlinked := treeModel()
 	roots := func(order orderMode) string {
 		var out []string
-		for _, r := range buildTree(entries, pulls, unlinked, order, prsOpen, false, nil, nil) {
+		for _, r := range buildTree(entries, pulls, unlinked, opts(order, prsOpen, false, nil), nil) {
 			if r.kind == rowIssue && r.depth == 0 && r.stack == "work" {
 				out = append(out, r.e.it.Key)
 			}
@@ -170,7 +183,7 @@ func TestOrderModes(t *testing.T) {
 		orderCreated:   "W-12 W-1", // the ghost epic counts its newest descendant (W-11, created after W-12? no: W-12 is newer)
 		orderUpdated:   "W-1 W-12", // W-11 was updated last, and it is under the epic
 		orderKey:       "W-1 W-12",
-		orderAttention: "W-1 W-12", // bad (conflicts under the epic) before ok (all merged)
+		orderAttention: "W-12 W-1", // nothing inherited: both need nothing, blocked before to do
 	} {
 		if got := roots(order); got != want {
 			t.Errorf("%s: roots = %q, want %q", order, got, want)
@@ -190,7 +203,7 @@ func TestPrsModes(t *testing.T) {
 	entries, pulls, unlinked := treeModel()
 	prs := func(mode prsMode) string {
 		var out []string
-		for _, r := range buildTree(entries, pulls, unlinked, orderCreated, mode, false, nil, nil) {
+		for _, r := range buildTree(entries, pulls, unlinked, opts(orderCreated, mode, false, nil), nil) {
 			if r.kind == rowPull {
 				out = append(out, r.p.Key)
 			}
@@ -208,16 +221,41 @@ func TestPrsModes(t *testing.T) {
 	}
 }
 
-// TestHideMerged: hiding the merged work leaves out the merged PR rows and
-// the tickets with nothing left under them: W-12 (its only PR is merged)
-// goes, W-11 stays without its merged PR, the ghost epic stays for the
-// work under it, and my open PR without a ticket stays.
-func TestHideMerged(t *testing.T) {
+// TestShowModes: pending leaves out the merged PR rows and the tickets with
+// nothing left under them (W-12, its only PR merged), keeps the ghost epic
+// for the work under it and my open PR without a ticket; working leaves out
+// the tickets not started, blocked or done too, a parent staying as the
+// container of children it lists.
+func TestShowModes(t *testing.T) {
 	entries, pulls, unlinked := treeModel()
-	rows := buildTree(entries, pulls, unlinked, orderCreated, prsAll, true, nil, nil)
+	rows := buildTree(entries, pulls, unlinked, opts(orderCreated, prsAll, true, nil), nil)
 	want := "H:work W-1 >W-10 >>↳front#3 >>W-11 >>>↳front#1 G >↳front#4 H:home app#2 >app#5 >>↳app#6"
 	if got := rowKeys(rows); got != want {
-		t.Errorf("rows = %s\nwant   %s", got, want)
+		t.Errorf("pending = %s\nwant      %s", got, want)
+	}
+	extra := append(treeIssues(),
+		issue{Key: "W-20", Stack: "work", URL: "w20", Project: "W", Status: "Open"},
+		issue{Key: "W-21", Stack: "work", URL: "w21", Project: "W", Status: "Blocked", State: stateBlocked},
+		issue{Key: "W-22", Stack: "work", URL: "w22", Project: "W", Status: "In Progress", State: stateDoing})
+	e := buildEntries(extra)
+	un := linkPulls(e, pulls)
+	keys := func(show showMode) string {
+		var out []string
+		for _, r := range buildTree(e, pulls, un, treeOpts{order: orderKey, prs: prsAll, show: show}, nil) {
+			if r.kind == rowIssue && r.stack == "work" {
+				out = append(out, r.e.it.Key)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	if got := keys(showWorking); got != "W-1 W-10 W-11 W-22" {
+		t.Errorf("working = %q", got)
+	}
+	if got := keys(showPending); got != "W-1 W-10 W-11 W-20 W-21 W-22" {
+		t.Errorf("pending = %q", got)
+	}
+	if got := keys(showAll); got != "W-1 W-10 W-11 W-12 W-20 W-21 W-22" {
+		t.Errorf("all = %q", got)
 	}
 	// A ghost whose only child is done goes with it.
 	done := buildEntries([]issue{
@@ -225,12 +263,124 @@ func TestHideMerged(t *testing.T) {
 		{Key: "E-2", Stack: "s", URL: "e2", ParentURL: "e1"},
 	})
 	ps := []pull{{URL: "u", Repo: "r/r", Key: "r#1", Stack: "s", State: prMerged, Mine: true, Refs: []string{"E-2"}}}
-	un := linkPulls(done, ps)
-	if rows := buildTree(done, ps, un, orderCreated, prsAll, true, nil, nil); len(rows) != 0 {
+	un = linkPulls(done, ps)
+	if rows := buildTree(done, ps, un, opts(orderCreated, prsAll, true, nil), nil); len(rows) != 0 {
 		t.Errorf("a done subtree under a ghost is hidden whole: %s", rowKeys(rows))
 	}
-	if rows := buildTree(done, ps, un, orderCreated, prsAll, false, nil, nil); rowKeys(rows) != "H:s E-1 >E-2 >>↳r#1" {
+	if rows := buildTree(done, ps, un, opts(orderCreated, prsAll, false, nil), nil); rowKeys(rows) != "H:s E-1 >E-2 >>↳r#1" {
 		t.Errorf("shown otherwise: %s", rowKeys(rows))
+	}
+	if parseShow("", "hide") != showPending || parseShow("", "") != defaultShow || parseShow("All", "hide") != showAll {
+		t.Errorf("parseShow: default working, a saved merged=hide reads as pending")
+	}
+}
+
+// TestTreeGuides: a ticket under a ticket takes a branch (the last sibling
+// ticket └), a guide runs down for every ancestor with a sibling still to
+// come, a ticket's own guide runs to its sub-tickets past its PRs, and a
+// PR row carries its ticket's guides.
+func TestTreeGuides(t *testing.T) {
+	entries := buildEntries([]issue{
+		{Key: "R-1", Stack: "s", URL: "r1", Created: time.Unix(1, 0)},
+		{Key: "R-2", Stack: "s", URL: "r2", ParentURL: "r1", Created: time.Unix(2, 0)},
+		{Key: "R-3", Stack: "s", URL: "r3", ParentURL: "r2", Created: time.Unix(3, 0)},
+		{Key: "R-4", Stack: "s", URL: "r4", ParentURL: "r1", Created: time.Unix(4, 0)},
+	})
+	pulls := []pull{{URL: "p", Repo: "o/r", Key: "r#9", Stack: "s", State: prOpen, Mine: true, Refs: []string{"R-2"}}}
+	un := linkPulls(entries, pulls)
+	rows := buildTree(entries, pulls, un, opts(orderKey, prsAll, false, nil), nil)
+	if got := rowKeys(rows); got != "H:s R-1 >R-2 >>↳r#9 >>R-3 >R-4" {
+		t.Fatalf("rows = %s", got)
+	}
+	bools := func(b []bool) string {
+		out := ""
+		for _, v := range b {
+			out += map[bool]string{true: "|", false: "."}[v]
+		}
+		return out
+	}
+	for i, want := range []struct {
+		rails   string
+		lastSib bool
+		kidRail bool
+	}{
+		{"", true, true},     // R-1: a root, its guide down to R-2 and R-4
+		{"", false, true},    // R-2: ├, its guide down to R-3 past its PR
+		{"||", false, false}, // r#9: R-1's guide (R-4 is still to come) and R-2's
+		{"|", true, false},   // R-3: └ under R-2, R-1's guide beside it
+		{"", true, false},    // R-4: └
+	} {
+		r := rows[i+1]
+		if bools(r.rails) != want.rails || r.kind == rowIssue && (r.lastSib != want.lastSib || r.kidRail != want.kidRail) {
+			t.Errorf("row %d (%s): rails %q last %v kid %v, want %+v", i+1, rowKeys([]row{r}), bools(r.rails), r.lastSib, r.kidRail, want)
+		}
+	}
+}
+
+// TestPhaseView: by phase, a section per PR state with one row per PR (a
+// PR under two tickets once per ticket) carrying the path of its tickets,
+// the tickets of mine with neither PRs nor children under no PR, empty
+// sections left out, and a folded section keeps its rule alone.
+func TestPhaseView(t *testing.T) {
+	entries, pulls, unlinked := treeModel()
+	o := treeOpts{order: orderCreated, prs: prsAll, show: showAll, group: groupPhase}
+	rows := buildTree(entries, pulls, unlinked, o, nil)
+	var got []string
+	for _, r := range rows {
+		switch r.kind {
+		case rowHeader:
+			got = append(got, "H:"+r.stack)
+		case rowSection:
+			got = append(got, "S:"+r.text)
+		case rowPull:
+			var path []string
+			for _, k := range r.path {
+				path = append(path, k.key)
+			}
+			got = append(got, strings.Join(append(path, r.p.Key), ">"))
+		case rowIssue:
+			got = append(got, "T:"+r.e.it.Key)
+		}
+	}
+	want := "H:work S:PR in review W-1>W-10>front#3 W-1>W-10>W-11>front#1 front#4 S:PRs merged W-12>infra#2 W-1>W-10>W-11>infra#2 H:home S:PR in review app#2>app#5>app#6"
+	if g := strings.Join(got, " "); g != want {
+		t.Errorf("phase = %s\nwant    %s", g, want)
+	}
+	o.collapsed = map[string]bool{"section:work:PRs merged": true}
+	for _, r := range buildTree(entries, pulls, unlinked, o, nil) {
+		if r.kind == rowPull && r.p.State == prMerged {
+			t.Errorf("a folded section lists nothing: %s", r.p.Key)
+		}
+	}
+	o.show = showWorking
+	for _, r := range buildTree(entries, pulls, unlinked, o, nil) {
+		if r.kind == rowSection && r.text == phaseMerged {
+			t.Errorf("working leaves the merged PRs out")
+		}
+	}
+}
+
+// TestFoldLevel: a level folds every ticket from depth level-1 down that has
+// something under it (and the group of PRs without a ticket at level 1);
+// deepest is how many levels there are.
+func TestFoldLevel(t *testing.T) {
+	entries, pulls, unlinked := treeModel()
+	rows := buildTree(entries, pulls, unlinked, opts(orderCreated, prsAll, false, nil), nil)
+	if d := deepest(rows); d != 3 {
+		t.Errorf("deepest = %d, want 3 (W-11 at depth 2 has PRs)", d)
+	}
+	f := foldLevel(rows, 1)
+	for _, k := range []string{"https://w/browse/W-1", "https://w/browse/W-12", "group:work", "https://github.com/me/app/issues/2"} {
+		if !f[k] {
+			t.Errorf("level 1 folds %s: %v", k, f)
+		}
+	}
+	rows = buildTree(entries, pulls, unlinked, opts(orderCreated, prsAll, false, foldLevel(rows, 2)), nil)
+	if got := rowKeys(rows); got != "H:work W-12 >↳infra#2 W-1 >W-10 G >↳front#4 H:home app#2 >app#5" {
+		t.Errorf("level 2 = %s", got)
+	}
+	if len(foldLevel(rows, 0)) != 0 {
+		t.Errorf("level 0 folds nothing")
 	}
 }
 
@@ -239,7 +389,7 @@ func TestHideMerged(t *testing.T) {
 func TestCollapsed(t *testing.T) {
 	entries, pulls, unlinked := treeModel()
 	folded := map[string]bool{"https://w/browse/W-10": true}
-	rows := buildTree(entries, pulls, unlinked, orderCreated, prsAll, false, folded, nil)
+	rows := buildTree(entries, pulls, unlinked, opts(orderCreated, prsAll, false, folded), nil)
 	if got := rowKeys(rows); got != "H:work W-12 >↳infra#2 W-1 >W-10 G >↳front#4 H:home app#2 >app#5 >>↳app#6" {
 		t.Errorf("rows = %s", got)
 	}
@@ -251,8 +401,8 @@ func TestCollapsed(t *testing.T) {
 			t.Errorf("%s has something to fold", r.e.it.Key)
 		}
 	}
-	s, k, m := corpora(entries)
-	rows = buildRows(entries, pulls, unlinked, orderCreated, prsAll, false, folded, "sub-task", s, k, m)
+	s, k, m := corpora(entries, trackerTitle)
+	rows = buildRows(entries, pulls, unlinked, opts(orderCreated, prsAll, false, folded), "sub-task", s, k, m)
 	if got := rowKeys(rows); got != "H:work W-1 >W-10 >>W-11 >>>↳front#1 >>>↳infra#2" {
 		t.Errorf("a query shows what is folded: %s", got)
 	}
@@ -264,8 +414,8 @@ func TestCollapsed(t *testing.T) {
 // best hit, and the first hit is where the cursor goes.
 func TestBuildTreeQueryKeepsAncestors(t *testing.T) {
 	entries, pulls, unlinked := treeModel()
-	s, k, m := corpora(entries)
-	rows := buildRows(entries, pulls, unlinked, orderCreated, prsAll, false, nil, "sub-task", s, k, m)
+	s, k, m := corpora(entries, trackerTitle)
+	rows := buildRows(entries, pulls, unlinked, opts(orderCreated, prsAll, false, nil), "sub-task", s, k, m)
 	if got := rowKeys(rows); got != "H:work W-1 >W-10 >>W-11 >>>↳front#1 >>>↳infra#2" {
 		t.Errorf("rows = %s", got)
 	}
@@ -276,11 +426,11 @@ func TestBuildTreeQueryKeepsAncestors(t *testing.T) {
 		t.Errorf("first hit = %d, want W-11", i)
 	}
 	// A PR's key finds its ticket, and the stack of the best hit goes first.
-	rows = buildRows(entries, pulls, unlinked, orderCreated, prsAll, false, nil, "app#6", s, k, m)
+	rows = buildRows(entries, pulls, unlinked, opts(orderCreated, prsAll, false, nil), "app#6", s, k, m)
 	if got := rowKeys(rows); !strings.HasPrefix(got, "H:home app#2 >app#5 >>↳app#6") {
 		t.Errorf("rows = %s", got)
 	}
-	if rows := buildRows(entries, pulls, unlinked, orderCreated, prsAll, false, nil, "zzzz", s, k, m); len(rows) != 0 {
+	if rows := buildRows(entries, pulls, unlinked, opts(orderCreated, prsAll, false, nil), "zzzz", s, k, m); len(rows) != 0 {
 		t.Errorf("no hit, no rows: %s", rowKeys(rows))
 	}
 }
@@ -293,7 +443,7 @@ func TestBuildTreeCycle(t *testing.T) {
 		{Key: "A-2", Stack: "s", URL: "a2", ParentURL: "a1"},
 		{Key: "A-3", Stack: "s", URL: "a3", ParentURL: "a3"},
 	})
-	rows := buildTree(entries, nil, nil, orderKey, prsAll, false, nil, nil)
+	rows := buildTree(entries, nil, nil, opts(orderKey, prsAll, false, nil), nil)
 	if got := rowKeys(rows); got != "H:s A-2 >A-1 A-3" {
 		t.Errorf("rows = %s", got)
 	}

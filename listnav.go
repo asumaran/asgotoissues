@@ -87,16 +87,27 @@ func (n listNav) move(msg tea.KeyPressMsg, cursor, count, page int, selectable f
 // the header of its group right above it, so a group's name never hides one
 // line over the selection. An empty list, or none to show, scrolls to 0.
 func scrollTo(offset, height, count, cursor, top int) int {
-	if height <= 0 || cursor < 0 || count <= 0 {
+	if cursor < 0 {
+		return 0
+	}
+	return scrollSpan(offset, height, count, top, cursor+1)
+}
+
+// scrollSpan is scrollTo for rows that take more than one line: the offset,
+// in lines, of a list of total lines that shows height of them and keeps
+// the lines from top up to bottom (excluded) in view, moving as little as it
+// can. A list with nothing to show scrolls to 0.
+func scrollSpan(offset, height, total, top, bottom int) int {
+	if height <= 0 || top < 0 || total <= 0 {
 		return 0
 	}
 	switch {
 	case top < offset:
 		offset = top
-	case cursor >= offset+height:
-		offset = cursor - height + 1
+	case bottom > offset+height:
+		offset = min(bottom-height, top) // a span taller than the list shows from its top
 	}
-	return max(0, min(offset, count-height))
+	return max(0, min(offset, total-height))
 }
 
 // emptyList is what a list says instead of rows, cut to width: the error

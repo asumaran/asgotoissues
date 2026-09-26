@@ -11,7 +11,7 @@ or GitHub (gh does not have to be installed).
 
 Usage: scripts/pty-check.py ./asgotoissues   (needs python3 + pyte)
 """
-NAME, ROWS, COLS = "asgotoissues", 18, 150
+NAME, ROWS, COLS = "asgotoissues", 28, 150
 import atexit, fcntl, json, os, pty, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time, re
 import pyte
 
@@ -135,25 +135,42 @@ stacks:
 """)
 netrc = write(os.path.join(home, ".netrc"), "")
 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-def ticket(key, stack, summary, status, cat, desc="", parent=""):
+def ticket(key, stack, summary, status, cat, desc="", parent="", ghost=False):
     t = {"key": key, "stack": stack, "url": "https://%s.example/browse/%s" % (stack, key), "summary": summary,
          "description": desc, "status": status, "status_cat": cat, "type": "Task", "priority": "Medium",
          "project": key.split("-")[0], "created": now, "updated": now}
-    if parent: t["parent_key"] = parent
+    if parent:
+        t["parent_key"], t["parent_summary"] = parent, "the parent"
+        t["parent_url"] = "https://%s.example/browse/%s" % (stack, parent)
+    if ghost: t["ghost"] = True
     return t
+def pr(repo, n, title, state, stack, ref, **extra):
+    p = {"url": "https://github.com/%s/pull/%d" % (repo, n), "number": n, "repo": repo, "stack": stack,
+         "key": "%s#%d" % (repo.split("/")[1], n), "title": title, "body": "the *body*", "state": state,
+         "head": "feat/%s" % ref.lower(), "base": "main", "author": "me", "mine": True, "refs": [ref],
+         "created": now, "updated": now}
+    p.update(extra)
+    return p
 tickets = [
     ticket("PLAT-2099", "acme", "Enforce authz on the export endpoint", "In Progress", "In Progress",
            "h2. Context\n\nThe *export* endpoint skips the policy check.\n\n* add the guard\n* cover it with a test"),
     ticket("PLAT-2098", "acme", "Audit trail at the service boundary", "To Do", "To Do"),
+    # a sub-task under an epic that is not mine: the epic is a ghost the provider fetched
     ticket("SHOP-602", "globex", "Create test fixtures", "Open", "To Do", parent="SHOP-600"),
+    ticket("SHOP-600", "globex", "Test the shop", "Open", "To Do", ghost=True),
     # a GitHub issue: its own source, a Markdown body, the meta line comes with it
     {"key": "tool#12", "stack": "home", "source": "github", "url": "https://github.com/me/tool/issues/12",
      "summary": "Cache layer rewrite", "description": "Rename `snake_case_name`.\n\n* keep the bullet",
      "body_format": "markdown", "status": "open", "state": "doing", "status_cat": "", "type": "", "priority": "",
      "project": "me/tool", "meta": ["me/tool", "bug, in progress"], "created": now, "updated": now},
 ]
+# two PRs under PLAT-2099, in two repos: one open with conflicts, one merged
+pulls = [
+    pr("acme/front", 41, "PLAT-2099 guard the export", "OPEN", "acme", "PLAT-2099", mergeable="CONFLICTING"),
+    pr("acme/infra", 7, "PLAT-2099 policy config", "MERGED", "acme", "PLAT-2099"),
+]
 write(os.path.join(home, ".local", "state", "herdr", "plugins", "asumaran.asgotoissues", "issuecache.json"),
-      json.dumps({"fetched_at": now, "issues": tickets}))
+      json.dumps({"fetched_at": now, "issues": tickets, "pulls": pulls}))
 open_log = os.path.join(SANDBOX, "open.log")
 opener = write(os.path.join(SANDBOX, "opener"), '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s"\n' % open_log, 0o755)
 clip_log = os.path.join(SANDBOX, "clip.log")
@@ -200,39 +217,54 @@ print("== asgotoissues pty driver (%dx%d) ==" % (COLS, ROWS))
 s = session()
 f = s.start("asgotoissues ❯"); dump("open", f)
 
-# The panel: f1 lays the keys alone (no options here) over the frame, takes the keys, and esc closes it.
+# The panel: f1 lays the options (the order, the PRs shown) and the keys over the frame, takes the keys, and esc closes it.
 p = s.send(b"\x1bOP", 0.6); dump("panel", p)
-check(len(p) == len(f) and any("╭─ help " in l for l in p) and any("Keys" in l for l in p) and not any("Options" in l for l in p),
-      "f1 opens the panel over a frame that keeps its size")
+check(len(p) == len(f) and any("╭─ options " in l for l in p) and any("Keys" in l for l in p) and any("Order" in l and "‹created›" in l for l in p)
+      and any("PRs" in l and "‹all›" in l for l in p) and any("Rows" in l and "‹two lines›" in l for l in p)
+      and any("Merged" in l and "‹show›" in l for l in p), "f1 opens the panel over a frame that keeps its size")
 s.send(b"zz", 0.6); p = s.send(b"\x1b", 0.6)
-check(s.proc.poll() is None and not any("╭─ help " in l for l in p) and prompt(p) == prompt(f), "esc closes the panel, which took the keys: %r" % prompt(p))
+check(s.proc.poll() is None and not any("╭─ options " in l for l in p) and prompt(p) == prompt(f), "esc closes the panel, which took the keys: %r" % prompt(p))
 p = s.send(b"?", 0.6)
 check(prompt(p).endswith("?"), "? is text for the filter: %r" % prompt(p))
 f = s.send(b"\x7f", 0.6)
-check(prompt(f) == "asgotoissues ❯ Search by title, key, status, repo…", "prompt line is clean: %r" % f[1])
+check(prompt(f) == "asgotoissues ❯ Search by title, key, status, repo, PR…", "prompt line is clean: %r" % f[1])
 check(devmark(f), "a dev build says so on the edge over the input")
 check(f[0].startswith("╭") and f[-1].startswith("╰") and "┬" in f[2],
       "one frame: input right under the top border, no title line")
-check(counter(f) == "4/4" and "type filter" in f[-2] and "esc/q quit" in f[-2], "counter %r and help %r" % (counter(f), f[-2]))
+check(counter(f) == "4/4" and "type filter" in f[-2] and "esc/q quit" in f[-2], "counter %r (my tickets: no ghost, no PR) and help %r" % (counter(f), f[-2]))
 check(b"\x1b[?1049h" in s.raw, "program entered the alt screen")
 rows = left(f)
 check(any("acme" in r for r in rows) and any("globex" in r for r in rows), "tickets are grouped by stack: %r" % rows)
-check(sum("PLAT-" in r or "SHOP-" in r for r in rows) == 3, "every cached ticket is listed")
+check(sum(re.match(r"[▌ ] +(PLAT|SHOP)-[0-9]", r) is not None for r in rows) == 4, "every cached ticket is listed, the ghost epic too: %r" % rows)
+title = next(r for r in rows if r.startswith("▌ PLAT-2099"))
+detail = next((r for r in rows if r.startswith("▌") and "In Progress · Task" in r), "")
+check(detail and detail.index("In Progress") == title.index("Enforce"), "the story's details sit under its title, past the key column, selected too: %r" % rows)
+prl = next((r for r in rows if r.startswith("  ") and "↳ front#41 PLAT-2099" in r), "")
+prd = next((r for r in rows if r.startswith(" ") and r.lstrip().startswith("open · con")), "")
+check(prl and prl.index("↳") == title.index("Enforce") and prd and prd.index("open") == prl.index("PLAT-2099")
+      and any(r.startswith("  ") and "↳ infra#7 PLAT-2099" in r for r in rows) and any(r.lstrip().startswith("merged · ") for r in rows),
+      "the PRs start where their ticket's title starts, key then title, their details under the title: %r" % rows)
+epic = next((r for r in rows if r.startswith("  SHOP-600 ")), "")
+sub = next((r for r in rows if r.startswith("  ") and "SHOP-602" in r), "")
+check(epic and sub and sub.index("SHOP-602") == epic.index("Test the shop"), "the sub-task starts where the ghost epic's title starts: %r" % rows)
 body = "\n".join(f)
 check("PLAT-2099" in body and "Context" in body and "add the guard" in body, "preview renders the description")
 check("rgb:" not in f[1], "the background reply is not typed into the filter")
-# SGR press+release on the third list line (acme, PLAT-2099, PLAT-2098): 1-based column 5, line 3+2+1
-f = s.send(b"\x1b[<0;5;6M\x1b[<0;5;6m", 0.5)
+# SGR press+release on the eighth list line (acme; PLAT-2099, ↳front#41, ↳infra#7 on two lines each; PLAT-2098): 1-based column 5, line 3+7+1
+f = s.send(b"\x1b[<0;5;11M\x1b[<0;5;11m", 0.5)
 rows = left(f)
 check(any(r.startswith("▌") and "PLAT-2098" in r for r in rows) and s.proc.poll() is None,
       "a click selects the ticket without opening it: %r" % rows)
-f = s.send(b"\x1b[<64;5;6M", 0.5)   # the wheel, up, over the list
+f = s.send(b"\x1b[<64;5;11M", 0.5)   # the wheel, up, over the list
 rows = left(f)
-check(any(r.startswith("▌") and "PLAT-2099" in r for r in rows) and s.proc.poll() is None,
-      "the wheel over the list moves the cursor: %r" % rows)
+check(any(r.startswith("▌") and "infra#7" in r for r in rows) and s.proc.poll() is None,
+      "the wheel over the list moves the cursor, onto a PR row too: %r" % rows)
+body = "\n".join(f)
+check("infra#7 · feat/plat-2099 → main · by me" in body and "[merged]" in body, "a PR row previews the PR's facts: %r" % [l for l in f if "infra#7" in l])
 f = s.send(b"602", 0.6); dump("filtered", f)
 rows = left(f)
-check(any("SHOP-602" in r for r in rows) and not any("PLAT-" in r for r in rows), "a ticket number filters: %r" % rows)
+check(any(r.startswith("▌") and "SHOP-602" in r for r in rows) and not any("PLAT-" in r for r in rows), "a ticket number filters: %r" % rows)
+check(any(r.startswith("  SHOP-600") for r in rows), "the hit keeps the parent that leads to it, as context: %r" % rows)
 check(counter(f) == "1/4", "the counter follows the filter: %r" % counter(f))
 s.send(ENTER, 0.3)
 check(s.finish() == 0, "clean exit after enter")
@@ -262,6 +294,38 @@ check("copied SHOP-602" in f[-2], "the help line confirms the copy: %r" % f[-2])
 check(prompt(f).endswith("602") and s.proc.poll() is None, "ctrl+y leaves the filter alone and keeps the list open: %r" % f[1])
 os.write(s.master, ESC); s.pump(0.4)
 check(s.finish() == 0 and opened() == [], "esc quits after a copy and opens nothing")
+
+# ---------- run 1d: enter on a PR row opens the PR; ctrl+s cycles the order and the next run keeps it ----------
+s = session()
+s.start("asgotoissues ❯")
+f = s.send(DOWN, 0.4)
+rows = left(f)
+check(any(r.startswith("▌ ") and "↳ front#41 PLAT-2099" in r for r in rows) and any(r.startswith("▌ ") and r.lstrip("▌ ").startswith("open · con") for r in rows),
+      "down from the story lands on its PR, both lines selected: %r" % rows)
+f = s.send(CTRL_S, 0.6); dump("order", f)
+check("order: updated" in f[-2], "ctrl+s says the order it set: %r" % f[-2])
+s.send(ENTER, 0.3)
+check(s.finish() == 0 and opened() == ["https://github.com/acme/front/pull/41"], "enter opens the PR in the browser: %r" % opened())
+s = session()
+p = s.start("asgotoissues ❯")
+p = s.send(b"\x1bOP", 0.6)
+check(any("Order" in l and "‹updated›" in l for l in p), "the next run opens with the saved order: %r" % [l for l in p if "Order" in l])
+s.send(b"\x1b", 0.4)
+for _ in range(3): s.send(CTRL_S, 0.3)   # back to created, so the runs after this one start where they expect
+os.write(s.master, ESC); s.pump(0.4); s.finish()
+
+# ---------- run 1e: space folds a ticket, and unfolds it ----------
+s = session()
+f = s.start("asgotoissues ❯")
+f = s.send(b" ", 0.6); dump("folded", f)
+rows = left(f)
+check(any(r.startswith("▌▸PLAT-2099") for r in rows) and not any("front#41" in r for r in rows) and any("PLAT-2098" in r for r in rows),
+      "space folds the story's PRs away and marks it in the gutter: %r" % rows)
+f = s.send(b" ", 0.6)
+rows = left(f)
+check(any("front#41" in r for r in rows) and not any("▸" in r for r in rows), "space again unfolds it: %r" % rows)
+check(prompt(f) == "asgotoissues ❯ Search by title, key, status, repo, PR…", "space with an empty filter is not typed: %r" % f[1])
+os.write(s.master, ESC); s.pump(0.4); s.finish()
 
 # ---------- run 2: q quits with an empty filter ----------
 s = session()

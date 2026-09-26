@@ -5,7 +5,11 @@ package main
 // click moves the cursor to the row under it. A click never opens anything:
 // that stays on enter, so a stray click cannot switch a branch or a space.
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"sort"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 // inList reports whether the screen cell (x, y) is inside a list that starts
 // on screen row top, one cell in from the frame's left side, width cells wide
@@ -19,6 +23,14 @@ func inList(x, y, top, width, height int) bool {
 func rowUnder(y, top, offset, count int) (int, bool) {
 	i := y - top + offset
 	return i, i >= 0 && i < count
+}
+
+// rowOfLine is the row that holds a content line, for a list whose rows take
+// more than one line: starts is the first line of each row, ascending, and a
+// row runs up to the next one's start. A line before the first row is none.
+func rowOfLine(line int, starts []int) (int, bool) {
+	i := sort.Search(len(starts), func(i int) bool { return starts[i] > line }) - 1
+	return i, i >= 0
 }
 
 // wheelKey is the key a wheel step over the list stands for, so the wheel

@@ -6,7 +6,12 @@ package main
 // JQL is fixed: tickets assigned to the authenticated user that are not in
 // the Done status category, newest activity first. Descriptions ride along in
 // the search response (no second round trip), so a refresh is a single
-// request per stack plus pagination.
+// request per stack plus pagination, plus one request per level of parents
+// the list does not hold (an epic assigned to someone else): those come back
+// as ghosts, so the tree can hang my tickets under them.
+//
+// Server/DC: the parent field only covers sub-tasks there (an epic is an
+// Epic Link custom field), so the hierarchy stops at the story.
 
 import (
 	"bytes"
@@ -24,6 +29,7 @@ const (
 	jiraTimeout  = 10 * time.Second
 	jiraPageSize = 100
 	jiraMaxPages = 5 // hard cap: 500 open tickets per stack is plenty
+	ghostLevels  = 3 // parents of parents fetched, at most: sub-task, story, epic, initiative
 )
 
 var jiraFields = []string{"key", "summary", "status", "issuetype", "priority", "project", "parent", "created", "updated", "description"}
@@ -55,7 +61,10 @@ type searchResp struct {
 				Key string `json:"key"`
 			} `json:"project"`
 			Parent struct {
-				Key string `json:"key"`
+				Key    string `json:"key"`
+				Fields struct {
+					Summary string `json:"summary"`
+				} `json:"fields"`
 			} `json:"parent"`
 		} `json:"fields"`
 	} `json:"issues"`
@@ -82,16 +91,71 @@ type jiraProvider struct{ s stack }
 
 func (jiraProvider) kind() string { return kindJira }
 
-// fetch returns every open ticket assigned to the user on one stack.
-func (p jiraProvider) fetch(ctx context.Context) ([]issue, error) {
+// fetch returns every open ticket assigned to the user on one stack, and
+// the parents those tickets hang from that are not among them, as ghosts.
+func (p jiraProvider) fetch(ctx context.Context) (fetched, error) {
 	s := p.s
 	cred, err := resolveCredential(s)
 	if err != nil {
-		return nil, err
+		return fetched{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, jiraTimeout*jiraMaxPages)
+	ctx, cancel := context.WithTimeout(ctx, jiraTimeout*(jiraMaxPages+ghostLevels))
 	defer cancel()
 
+	out, err := p.search(ctx, cred, jiraJQL)
+	if err != nil {
+		return fetched{}, err
+	}
+	ghosts, err := p.ghosts(ctx, cred, out)
+	if err != nil {
+		return fetched{}, err
+	}
+	return fetched{issues: append(out, ghosts...)}, nil
+}
+
+// ghosts fetches the parents the issues name that are not in the list, then
+// the parents of those, up to ghostLevels deep: the epic my story belongs
+// to, and the initiative over it, even when neither is mine.
+func (p jiraProvider) ghosts(ctx context.Context, cred credential, issues []issue) ([]issue, error) {
+	have := map[string]bool{}
+	for _, it := range issues {
+		have[it.Key] = true
+	}
+	var out []issue
+	want := missingParents(issues, have)
+	for level := 0; level < ghostLevels && len(want) > 0; level++ {
+		got, err := p.search(ctx, cred, "key in ("+strings.Join(want, ",")+")")
+		if err != nil {
+			return nil, err
+		}
+		for i := range got {
+			got[i].Ghost = true
+			have[got[i].Key] = true
+		}
+		out = append(out, got...)
+		want = missingParents(got, have)
+	}
+	return out, nil
+}
+
+// missingParents lists, once each, the parent keys of issues that are not
+// in have.
+func missingParents(issues []issue, have map[string]bool) []string {
+	var keys []string
+	seen := map[string]bool{}
+	for _, it := range issues {
+		if it.ParentKey == "" || have[it.ParentKey] || seen[it.ParentKey] {
+			continue
+		}
+		seen[it.ParentKey] = true
+		keys = append(keys, it.ParentKey)
+	}
+	return keys
+}
+
+// search runs one JQL query, page by page, and maps the tickets.
+func (p jiraProvider) search(ctx context.Context, cred credential, jql string) ([]issue, error) {
+	s := p.s
 	var out []issue
 	var pageToken string
 	startAt := 0
@@ -100,10 +164,10 @@ func (p jiraProvider) fetch(ctx context.Context) ([]issue, error) {
 		var endpoint string
 		if s.Type == "server" {
 			endpoint = s.BaseURL + "/rest/api/2/search"
-			body = map[string]any{"jql": jiraJQL, "maxResults": jiraPageSize, "startAt": startAt, "fields": jiraFields}
+			body = map[string]any{"jql": jql, "maxResults": jiraPageSize, "startAt": startAt, "fields": jiraFields}
 		} else {
 			endpoint = s.BaseURL + "/rest/api/2/search/jql"
-			body = map[string]any{"jql": jiraJQL, "maxResults": jiraPageSize, "fields": jiraFields}
+			body = map[string]any{"jql": jql, "maxResults": jiraPageSize, "fields": jiraFields}
 			if pageToken != "" {
 				body["nextPageToken"] = pageToken
 			}
@@ -115,23 +179,28 @@ func (p jiraProvider) fetch(ctx context.Context) ([]issue, error) {
 		for _, raw := range resp.Issues {
 			created, _ := parseJiraTime(raw.Fields.Created)
 			updated, _ := parseJiraTime(raw.Fields.Updated)
-			out = append(out, issue{
-				Key:         raw.Key,
-				Stack:       s.Name,
-				Source:      kindJira,
-				State:       jiraState(raw.Fields.Status.Name, raw.Fields.Status.Category.Name),
-				URL:         s.BaseURL + "/browse/" + raw.Key,
-				Summary:     raw.Fields.Summary,
-				Description: raw.Fields.Description,
-				Status:      raw.Fields.Status.Name,
-				StatusCat:   raw.Fields.Status.Category.Name,
-				Type:        raw.Fields.IssueType.Name,
-				Priority:    raw.Fields.Priority.Name,
-				Project:     raw.Fields.Project.Key,
-				ParentKey:   raw.Fields.Parent.Key,
-				Created:     created,
-				Updated:     updated,
-			})
+			it := issue{
+				Key:           raw.Key,
+				Stack:         s.Name,
+				Source:        kindJira,
+				State:         jiraState(raw.Fields.Status.Name, raw.Fields.Status.Category.Name),
+				URL:           s.BaseURL + "/browse/" + raw.Key,
+				Summary:       raw.Fields.Summary,
+				Description:   raw.Fields.Description,
+				Status:        raw.Fields.Status.Name,
+				StatusCat:     raw.Fields.Status.Category.Name,
+				Type:          raw.Fields.IssueType.Name,
+				Priority:      raw.Fields.Priority.Name,
+				Project:       raw.Fields.Project.Key,
+				ParentKey:     raw.Fields.Parent.Key,
+				ParentSummary: raw.Fields.Parent.Fields.Summary,
+				Created:       created,
+				Updated:       updated,
+			}
+			if it.ParentKey != "" {
+				it.ParentURL = s.BaseURL + "/browse/" + it.ParentKey
+			}
+			out = append(out, it)
 		}
 		if s.Type == "server" {
 			startAt += len(resp.Issues)

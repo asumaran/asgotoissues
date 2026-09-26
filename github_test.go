@@ -64,10 +64,11 @@ func TestGitHubFetchListsAssignedIssues(t *testing.T) {
 			"{}"), // what a non-issue node decodes to
 	})
 	p := githubProvider{stack{Name: "home", Orgs: []string{"acme", "Me"}}}
-	got, err := p.fetch(context.Background())
+	res, err := p.fetch(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := res.issues
 	if want := []string{qAssigned, qAssigned + " @c1"}; strings.Join(*asked, "|") != strings.Join(want, "|") {
 		t.Errorf("queries = %q, want %q", *asked, want)
 	}
@@ -150,7 +151,7 @@ func TestRankingFindsGitHubKeys(t *testing.T) {
 	})
 	summaries, keys, metas := corpora(entries)
 	top := func(q string) string {
-		for _, r := range buildRows(entries, q, summaries, keys, metas) {
+		for _, r := range testRows(entries, q, summaries, keys, metas) {
 			if r.kind == "issue" {
 				return r.e.it.Key
 			}
@@ -161,5 +162,46 @@ func TestRankingFindsGitHubKeys(t *testing.T) {
 		if got := top(q); got != want {
 			t.Errorf("top(%q) = %s, want %s", q, got, want)
 		}
+	}
+}
+
+// TestGitHubFetchNestsParents: an issue's parent and the parent's parent ride
+// along in the query; the ones that are not in the list come back as ghosts
+// (once, however many children name them), the parent key follows the key
+// qualification, and the tree hangs the issue from the parent's URL.
+func TestGitHubFetchNestsParents(t *testing.T) {
+	parent := func(owner, repo string, n int, title, inner string) string {
+		return fmt.Sprintf(`"parent":{"number":%d,"title":%q,"url":"https://github.com/%s/%s/issues/%d","state":"OPEN","createdAt":"2026-08-01T10:00:00Z","updatedAt":"2026-08-02T10:00:00Z","repository":{"name":%q,"nameWithOwner":"%s/%s"}%s}`,
+			n, title, owner, repo, n, repo, owner, repo, inner)
+	}
+	withParent := func(node, parent string) string { return node[:len(node)-1] + "," + parent + "}" }
+	epic := parent("acme", "shop", 5, "the epic", "")
+	fakeGh(t, map[string]string{
+		qAssigned: ghPage("",
+			withParent(ghNode("acme", "shop", 1, "child"), parent("acme", "shop", 4, "the story", ","+epic)),
+			withParent(ghNode("acme", "shop", 2, "sibling"), parent("acme", "shop", 4, "the story", ","+epic)),
+			withParent(ghNode("acme", "shop", 4, "the story", "in progress"), epic),
+			withParent(ghNode("me", "shop", 3, "elsewhere"), parent("me", "shop", 6, "other owner", ""))),
+	})
+	res, err := githubProvider{stack{Name: "home", Orgs: []string{"acme", "Me"}}}.fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, it := range res.issues {
+		lines = append(lines, fmt.Sprintf("%s ghost=%v parent=%s", it.Key, it.Ghost, it.ParentKey))
+	}
+	want := "acme/shop#1 ghost=false parent=acme/shop#4|acme/shop#2 ghost=false parent=acme/shop#4|acme/shop#4 ghost=false parent=acme/shop#5|" +
+		"me/shop#3 ghost=false parent=me/shop#6|acme/shop#5 ghost=true parent=|me/shop#6 ghost=true parent="
+	if got := strings.Join(lines, "|"); got != want {
+		t.Errorf("issues =\n%s\nwant\n%s", strings.ReplaceAll(got, "|", "\n"), strings.ReplaceAll(want, "|", "\n"))
+	}
+	g := res.issues[4]
+	if g.URL != "https://github.com/acme/shop/issues/5" || g.Summary != "the epic" || g.Status != "open" || g.Project != "acme/shop" || g.Source != kindGitHub {
+		t.Errorf("ghost: %+v", g)
+	}
+	rows := buildTree(buildEntries(res.issues), nil, nil, orderKey, prsAll, false, nil, nil)
+	if got := rowKeys(rows); got != "H:home acme/shop#5 >acme/shop#4 >>acme/shop#1 >>acme/shop#2 me/shop#6 >me/shop#3" {
+		t.Errorf("tree = %s", got)
 	}
 }

@@ -1,29 +1,68 @@
 package main
 
 // Filtering and ranking. Entries (one per ticket, pre-grouped by stack) carry
-// three lowercased corpora matched independently per keystroke — summary,
-// key, and metadata (status, type, project, stack, parent key) — so typing
-// "2099" finds PLAT-2099, "uat" finds tickets in UAT, "subtask" finds
-// sub-tasks. Only summary matches produce highlight indexes.
+// three corpora matched independently per keystroke — summary, key, and
+// metadata (status, type, project, stack, parent key and summary, the keys
+// and branches of the linked PRs) — so typing "2099" finds PLAT-2099, "uat"
+// finds tickets in UAT, "subtask" finds sub-tasks, and a PR's number or
+// branch finds its ticket. Only summary matches produce highlight indexes.
+// The rows themselves are built by the tree (tree.go).
 
 import (
-	"sort"
 	"strings"
 )
 
-// entry is one selectable ticket.
+// entry is one selectable ticket and the PRs linked to it (linkPulls).
 type entry struct {
-	it issue
+	it    issue
+	pulls []*pull
 }
 
+// row kinds
+const (
+	rowHeader = "header" // a stack
+	rowGroup  = "group"  // the PRs without a ticket, under their stack
+	rowIssue  = "issue"
+	rowPull   = "pull"
+)
+
 type row struct {
-	kind  string // "header" | "issue"
-	e     *entry // nil for headers
-	stack string
-	match bool
-	score int
-	idx   []int // matched rune positions in the summary, for highlighting
+	kind      string
+	e         *entry // issue rows
+	p         *pull  // pull rows
+	stack     string
+	text      string // group rows
+	depth     int    // nesting: how many rows it hangs from
+	col       int    // the cells the row is set in from the gutter: where its parent's title starts
+	parent    string // what it hangs from (the parent's URL), for the row's identity
+	match     bool   // a hit
+	ctx       bool   // an ancestor listed to lead to a hit, not a hit itself
+	score     int
+	idx       []int    // matched rune positions in the summary, for highlighting
+	kids      bool     // issue rows: it has PRs or children to fold
+	collapsed bool     // issue rows: folded, its PRs and children not listed
+	level     int      // attention: the worst of the row's flags (a ticket's: of its PRs and its descendants')
+	merged    bool     // issue rows: every PR merged
+	flags     []prFlag // pull rows: what the PR needs
+	needs     []prFlag // issue rows: what its PRs and its descendants' need, once each, worst first
 }
+
+// selectable reports whether the cursor may sit on the row.
+func (r row) selectable() bool { return r.kind == rowIssue || r.kind == rowPull }
+
+// url is what the row opens.
+func (r row) url() string {
+	switch r.kind {
+	case rowIssue:
+		return r.e.it.URL
+	case rowPull:
+		return r.p.URL
+	}
+	return ""
+}
+
+// id tells a row from every other, a PR under two tickets included.
+func (r row) id() string { return r.parent + "|" + r.url() }
 
 // buildEntries wraps issues in display order (mergeStacks already grouped
 // them by stack, newest first within each).
@@ -42,8 +81,11 @@ func corpora(entries []*entry) (summaries, keys, metas []string) {
 	for _, e := range entries {
 		summaries = append(summaries, e.it.Summary)
 		keys = append(keys, e.it.Key+" "+e.it.number())
-		meta := strings.Join([]string{e.it.Status, e.it.Type, e.it.Project, e.it.Stack, e.it.ParentKey, strings.Join(e.it.Meta, " ")}, " ")
-		metas = append(metas, meta)
+		parts := []string{e.it.Status, e.it.Type, e.it.Project, e.it.Stack, e.it.ParentKey, e.it.ParentSummary, strings.Join(e.it.Meta, " ")}
+		for _, p := range e.pulls {
+			parts = append(parts, p.Key, p.number(), p.Head)
+		}
+		metas = append(metas, strings.Join(parts, " "))
 	}
 	return summaries, keys, metas
 }
@@ -64,8 +106,8 @@ func findHits(q string, summaries, keys, metas []string) map[int]hit {
 }
 
 // matchBonus biases ranking beyond the raw fuzzy score: an exact key or
-// number jumps to the obvious ticket, key hits beat summary hits on ties,
-// exact stack/project names bubble their group up.
+// number jumps to the obvious ticket (a linked PR's too), key hits beat
+// summary hits on ties, exact stack/project names bubble their group up.
 func matchBonus(e *entry, h hit, q string) int {
 	bonus := 0
 	q = strings.ToLower(strings.TrimSpace(q)) // the bonuses compare whole words, whatever their case
@@ -77,6 +119,13 @@ func matchBonus(e *entry, h hit, q string) int {
 		bonus += 20
 	case strings.HasPrefix(lk, q) && strings.ContainsAny(q, "-#"):
 		bonus += 10
+	default:
+		for _, p := range e.pulls {
+			if q == strings.ToLower(p.Key) || q == p.number() {
+				bonus += 20
+				break
+			}
+		}
 	}
 	if q == strings.ToLower(e.it.Stack) || q == strings.ToLower(e.it.Project) {
 		bonus += 10
@@ -88,49 +137,38 @@ func matchBonus(e *entry, h hit, q string) int {
 }
 
 // buildRows turns entries into display rows: a header per stack, then its
-// tickets. When filtering, only matching tickets (and their headers) survive
-// and they are ranked: best match first, the stack that holds it on top.
-func buildRows(entries []*entry, q string, summaries, keys, metas []string) []row {
-	filtering := hasTerms(q)
+// tickets as a tree with their PRs (buildTree). When filtering, the hits
+// are scored and the tree keeps them and the ancestors that lead to them,
+// best match first.
+func buildRows(entries []*entry, pulls []pull, unlinked map[string][]*pull, order orderMode, prs prsMode, hideMerged bool, collapsed map[string]bool, q string, summaries, keys, metas []string) []row {
 	var hits map[int]hit
-	if filtering {
+	if hasTerms(q) {
 		hits = findHits(q, summaries, keys, metas)
-	}
-	var issues []row
-	for i, e := range entries {
-		h, ok := hits[i]
-		if filtering && !ok {
-			continue
+		for i, h := range hits {
+			h.score += matchBonus(entries[i], h, q)
+			hits[i] = h
 		}
-		score := 0
-		if filtering {
-			score = h.score + matchBonus(e, h, q)
-		}
-		issues = append(issues, row{kind: "issue", e: e, stack: e.it.Stack, match: ok, score: score, idx: h.idx})
 	}
-	if filtering {
-		// equal scores: the most recently updated ticket first
-		sort.SliceStable(issues, func(i, j int) bool { return issues[i].e.it.Updated.After(issues[j].e.it.Updated) })
-		issues = rank(issues, func(r row) int { return r.score }, func(r row) string { return r.stack })
-	}
-	var rows []row
-	last := ""
-	for _, r := range issues {
-		if r.stack != last {
-			rows = append(rows, row{kind: "header", stack: r.stack})
-			last = r.stack
-		}
-		rows = append(rows, r)
-	}
-	return rows
+	return buildTree(entries, pulls, unlinked, order, prs, hideMerged, collapsed, hits)
 }
 
-// firstIssue returns the index of the first selectable row, or -1.
+// firstIssue returns the index of the first row the cursor may sit on, or -1.
 func firstIssue(rows []row) int {
 	for i, r := range rows {
-		if r.kind == "issue" {
+		if r.selectable() {
 			return i
 		}
 	}
 	return -1
+}
+
+// firstHit is the first row that matched the query, or the first selectable
+// one when none did (a query that matches nothing lists nothing).
+func firstHit(rows []row) int {
+	for i, r := range rows {
+		if r.match {
+			return i
+		}
+	}
+	return firstIssue(rows)
 }

@@ -15,9 +15,13 @@ import (
 // still render immediately while they revalidate.
 const cacheFresh = 60 * time.Second
 
+// issueCache is the snapshot on disk. Its shape is a contract: a snapshot
+// written by an older version (no pulls, issues without their newer fields)
+// still loads and renders.
 type issueCache struct {
 	FetchedAt time.Time `json:"fetched_at"`
 	Issues    []issue   `json:"issues"`
+	Pulls     []pull    `json:"pulls,omitempty"`
 }
 
 func cacheFile() string {

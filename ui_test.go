@@ -308,7 +308,7 @@ func TestFrameGeometry(t *testing.T) {
 		}
 		// The list starts at listY: the stack's name and the selected issue
 		// under it, or the issue alone when the body is a single line.
-		if top := plain[listY]; !strings.HasPrefix(top, "│alpha") && !strings.HasPrefix(top, "│▌ PLAT-10") {
+		if top := plain[listY]; !strings.HasPrefix(top, "│alpha") && !strings.HasPrefix(top, "│▌ PLAT-1") {
 			t.Errorf("%v: the list does not start at listY: %q", size, top)
 		}
 		help := plain[len(plain)-2]
@@ -320,14 +320,15 @@ func TestFrameGeometry(t *testing.T) {
 
 func TestClickSelectsTicketRow(t *testing.T) {
 	m := testModel(t)
-	// rows: header(alpha) PLAT-100 header(beta) BETA-7
+	// rows: header(alpha) PLAT-100 header(beta) BETA-7, two lines each but the headers:
+	// lines 0 | 1 2 | 3 | 4 5
 	click := func(x, y int) tea.MouseClickMsg { return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft} }
-	res, _ := m.Update(click(3, listY+3))
+	res, _ := m.Update(click(3, listY+5)) // the second line of BETA-7 selects it too
 	got := res.(model)
 	if r := got.currentRow(); r == nil || r.e.it.Key != "BETA-7" || got.openURL != "" {
 		t.Fatalf("click must select BETA-7 without opening it: cursor=%d open=%q", got.cursor, got.openURL)
 	}
-	for _, c := range []tea.MouseClickMsg{click(3, listY+2), click(got.listW()+10, listY+1),
+	for _, c := range []tea.MouseClickMsg{click(3, listY+3), click(got.listW()+10, listY+1),
 		click(got.listW()+1, listY+1), click(0, listY+1), click(3, mainY), click(3, 1)} {
 		res, _ = got.Update(c)
 		if res.(model).cursor != got.cursor {
@@ -467,7 +468,7 @@ func TestSelectedRowKeepsItsMatches(t *testing.T) {
 	if r.kind != "issue" || len(r.idx) == 0 {
 		t.Fatalf("the cursor should sit on the matching issue: %+v", r)
 	}
-	sel, plain := m.rowLine(r, true, m.keyW(), 200), m.rowLine(r, false, m.keyW(), 200)
+	sel, plain := m.rowLine(r, true, 200), m.rowLine(r, false, 200)
 	if !strings.Contains(sel, matchOver(stSel).Render("readme")) {
 		t.Errorf("selected row lost its match: %q", sel)
 	}
@@ -485,11 +486,12 @@ func TestSelectedRowKeepsItsMatches(t *testing.T) {
 	}
 }
 
-// TestPanel: f1 lays the keys over a frame that keeps its size, takes
-// every key while it is open, and esc closes it before it quits. `?` is text
-// for the filter. This tool has no options, so the panel lists the keys alone.
+// TestPanel: f1 lays the options and the keys over a frame that keeps its
+// size, takes every key while it is open, and esc closes it before it quits.
+// `?` is text for the filter.
 func TestPanel(t *testing.T) {
-	m := testModel(t) // 120x30
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir()) // the keys pressed under the panel change an option
+	m := testModel(t)                               // 120x30
 	press := func(keys ...tea.KeyPressMsg) {
 		for _, k := range keys {
 			res, _ := m.Update(k)
@@ -497,7 +499,7 @@ func TestPanel(t *testing.T) {
 		}
 	}
 	closed := strings.Split(ansi.Strip(m.render()), "\n")
-	if foot := closed[len(closed)-2]; !strings.Contains(foot, "f1 help") {
+	if foot := closed[len(closed)-2]; !strings.Contains(foot, "f1 options") {
 		t.Fatalf("the help line offers the panel: %q", foot)
 	}
 	list := m.listVP.Height()
@@ -507,10 +509,7 @@ func TestPanel(t *testing.T) {
 		t.Fatalf("the panel changed the frame: %d lines (list %d), want %d (list %d)", len(open), m.listVP.Height(), len(closed), list)
 	}
 	all := strings.Join(open, "\n")
-	if strings.Contains(all, "Options") {
-		t.Errorf("no options here, so no such section:\n%s", all)
-	}
-	for _, want := range []string{"╭─ help ", "Keys", "esc close", "pgup/pgdn", "⌥↑/⌥↓", "scroll the description", "resize the list"} {
+	for _, want := range []string{"╭─ options ", "Options", "Order", "‹created›", "PRs", "‹all›", "Rows", "‹two lines›", "Merged", "‹show›", "Keys", "esc close", "pgup/pgdn", "⌥↑/⌥↓", "scroll the description", "resize the list", "order by updated"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the panel lacks %q:\n%s", want, all)
 		}
@@ -552,18 +551,19 @@ func TestScrollingUpRevealsTheGroupHeader(t *testing.T) {
 		}
 	}
 	// A list short enough to scroll down to that issue.
-	for h := 12; h > 6 && m.listVP.Height() > len(m.rows)-first; h-- {
+	for h := 12; h > 6 && m.listVP.Height() > m.lines-m.lineOf[first]; h-- {
 		res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: h})
 		m = res.(model)
 	}
-	m.listVP.SetYOffset(first)
-	if m.listVP.YOffset() != first {
-		t.Fatalf("could not scroll to row %d: %d rows in %d lines", first, len(m.rows), m.listVP.Height())
+	line := m.lineOf[first]
+	m.listVP.SetYOffset(line)
+	if m.listVP.YOffset() != line {
+		t.Fatalf("could not scroll to line %d: %d lines in %d", line, m.lines, m.listVP.Height())
 	}
 	m.cursor = first
 	m.ensureVisible()
-	if got := m.listVP.YOffset(); got != first-1 {
-		t.Errorf("offset = %d, want %d: the header above row %d should show", got, first-1, first)
+	if got := m.listVP.YOffset(); got != line-1 {
+		t.Errorf("offset = %d, want %d: the header above row %d should show", got, line-1, first)
 	}
 }
 
@@ -627,13 +627,13 @@ func TestSelectedRowSpansListWidth(t *testing.T) {
 	m := testModel(t)
 	w := m.listW()
 	r := m.rows[m.cursor]
-	got := m.rowLine(r, true, m.keyW(), w)
+	got := m.rowLine(r, true, w)
 	if n := ansi.StringWidth(got); n != w || !strings.HasSuffix(ansi.Strip(got), " ") {
 		t.Errorf("selected row is %d cells, want %d padded: %q", n, w, ansi.Strip(got))
 	}
 	r.e.it.Summary = strings.Repeat("x", 200)
 	for _, sel := range []bool{true, false} {
-		if n := ansi.StringWidth(m.rowLine(r, sel, m.keyW(), w)); n > w || sel && n != w {
+		if n := ansi.StringWidth(m.rowLine(r, sel, w)); n > w || sel && n != w {
 			t.Errorf("long row (selected=%v) is %d cells, want %d", sel, n, w)
 		}
 	}

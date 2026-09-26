@@ -118,7 +118,9 @@ func TestParseStacksIssuesKey(t *testing.T) {
 			t.Errorf("%s = %q, want %q", name, got[name], w)
 		}
 	}
-	if ids := sourceIDs(sourcesOf(stacks)); ids != "both/github both/jira mine/github plain/jira" {
+	// A stack with GitHub owners has a pulls source after its trackers,
+	// whether or not it lists GitHub issues.
+	if ids := sourceIDs(sourcesOf(stacks)); ids != "both/github both/jira both/pulls mine/github mine/pulls plain/jira plain/pulls" {
 		t.Errorf("sources = %s", ids)
 	}
 
@@ -257,7 +259,7 @@ func testEntries() []*entry {
 func TestBuildRowsGroupsByStack(t *testing.T) {
 	entries := testEntries()
 	s, k, m := corpora(entries)
-	rows := buildRows(entries, "", s, k, m)
+	rows := testRows(entries, "", s, k, m)
 	kinds := []string{}
 	for _, r := range rows {
 		if r.kind == "header" {
@@ -282,7 +284,7 @@ func TestRankingPrefersExactKeyAndNumber(t *testing.T) {
 		"sub-task":  "SHOP-602",
 		"boundary":  "PLAT-2098",
 	} {
-		rows := buildRows(entries, q, s, k, m)
+		rows := testRows(entries, q, s, k, m)
 		b := firstIssue(rows) // ranked: the best match is the first row
 		if b < 0 {
 			t.Errorf("query %q: no match", q)
@@ -292,7 +294,7 @@ func TestRankingPrefersExactKeyAndNumber(t *testing.T) {
 			t.Errorf("query %q: best = %s, want %s", q, got, want)
 		}
 	}
-	rows := buildRows(entries, "zzzzzz", s, k, m)
+	rows := testRows(entries, "zzzzzz", s, k, m)
 	if len(rows) != 0 {
 		t.Errorf("non-matching query kept %d rows", len(rows))
 	}
@@ -301,7 +303,7 @@ func TestRankingPrefersExactKeyAndNumber(t *testing.T) {
 func TestNavigationSkipsHeaders(t *testing.T) {
 	entries := testEntries()
 	s, k, m := corpora(entries)
-	rows := buildRows(entries, "", s, k, m)
+	rows := testRows(entries, "", s, k, m)
 	cur := firstIssue(rows)
 	if rows[cur].e.it.Key != "PLAT-2099" {
 		t.Fatalf("first = %s", rows[cur].e.it.Key)
@@ -338,7 +340,7 @@ func TestFilteringRanksRowsAndTheirStacks(t *testing.T) {
 	})
 	s, k, m := corpora(entries)
 	var got []string
-	for _, r := range buildRows(entries, "indexable", s, k, m) {
+	for _, r := range testRows(entries, "indexable", s, k, m) {
 		if r.kind == "header" {
 			got = append(got, "H:"+r.stack)
 		} else {
@@ -351,7 +353,7 @@ func TestFilteringRanksRowsAndTheirStacks(t *testing.T) {
 	}
 	// without a query the list is the list: config order, nothing ranked
 	got = got[:0]
-	for _, r := range buildRows(entries, "", s, k, m) {
+	for _, r := range testRows(entries, "", s, k, m) {
 		if r.kind == "issue" {
 			got = append(got, r.e.it.Key)
 		}
@@ -381,29 +383,29 @@ func dumpInputs(t *testing.T) ([]stack, issueCache) {
 func TestRunDump(t *testing.T) {
 	stacks, cache := dumpInputs(t)
 	var out bytes.Buffer
-	runDump(&out, stacks, cache, false, "", "")
+	runDump(&out, stacks, cache, false, "", "", "")
 	got := out.String()
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
-	// 3 summary lines, 2 trackers, 2 stack headers, 3 tickets.
-	if len(lines) != 10 {
-		t.Fatalf("got %d lines, want 10:\n%s", len(lines), got)
+	// 3 summary lines, 2 trackers, the order, 2 stack headers, 3 tickets.
+	if len(lines) != 11 {
+		t.Fatalf("got %d lines, want 11:\n%s", len(lines), got)
 	}
 	if lines[0] != "config: "+configPath() {
 		t.Errorf("first line %q, want the config path", lines[0])
 	}
-	if !strings.HasPrefix(lines[1], "cache: 3 issues, fetched ") || lines[2] != "stacks: 2" {
+	if !strings.HasPrefix(lines[1], "cache: 3 issues, 0 PRs, fetched ") || lines[2] != "stacks: 2" {
 		t.Errorf("summary %q, want the cache and the stacks", lines[1:3])
 	}
-	if lines[5] != "dh" || lines[8] != "mo" {
-		t.Errorf("stack headers %q and %q, want dh and mo", lines[5], lines[8])
+	if lines[5] != "order: created" || lines[6] != "dh" || lines[9] != "mo" {
+		t.Errorf("order %q, stack headers %q and %q, want created, dh and mo", lines[5], lines[6], lines[9])
 	}
 	for _, e := range testEntries() {
 		if n := strings.Count(got, e.it.Key+" "); n != 1 {
 			t.Errorf("%s is listed %d times, want once:\n%s", e.it.Key, n, got)
 		}
 	}
-	if want := "  PLAT-2099    [UAT] Task: Audit: enforce authz (updated "; !strings.HasPrefix(lines[6], want) {
-		t.Errorf("ticket row %q, want it to start with %q", lines[6], want)
+	if want := "  PLAT-2099 [UAT] Task: Audit: enforce authz (updated "; !strings.HasPrefix(lines[7], want) {
+		t.Errorf("ticket row %q, want it to start with %q", lines[7], want)
 	}
 }
 
@@ -412,7 +414,7 @@ func TestRunDump(t *testing.T) {
 func TestRunDumpQuery(t *testing.T) {
 	stacks, cache := dumpInputs(t)
 	var out bytes.Buffer
-	runDump(&out, stacks, cache, false, "boundary audit", "")
+	runDump(&out, stacks, cache, false, "boundary audit", "", "")
 	got := out.String()
 	_, matches, ok := strings.Cut(got, "query \"boundary audit\":\n")
 	if !ok {
@@ -423,7 +425,7 @@ func TestRunDumpQuery(t *testing.T) {
 	}
 
 	out.Reset()
-	runDump(&out, stacks, cache, false, "audit", "")
+	runDump(&out, stacks, cache, false, "audit", "", "")
 	got = out.String()
 	_, matches, _ = strings.Cut(got, "query \"audit\":\n")
 	lines := strings.Split(strings.TrimRight(matches, "\n"), "\n")
@@ -447,5 +449,48 @@ func TestRunDumpQuery(t *testing.T) {
 		if strings.Contains(got, not) {
 			t.Errorf("the query dump has %q, a piece of the full listing:\n%s", not, got)
 		}
+	}
+}
+
+// testRows is buildRows with no PRs and the default options: the rows of a
+// list of tickets alone.
+func testRows(entries []*entry, q string, summaries, keys, metas []string) []row {
+	return buildRows(entries, nil, nil, orderCreated, prsAll, false, nil, q, summaries, keys, metas)
+}
+
+// TestRunDumpTree: -dump prints the tree: the indent, a ghost marked, what
+// a ticket's PRs need, the PRs under their ticket with their flags, the
+// order line and the pulls source; -order beats the saved setting and is
+// not saved.
+func TestRunDumpTree(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("ASGOTOISSUES_CONFIG", filepath.Join(t.TempDir(), "asdev.local.md"))
+	saveSetting(stateDir(), "order", "key")
+	stacks := []stack{{Name: "work", Trackers: []string{kindJira}, Orgs: []string{"me"}, BaseURL: "https://w"}, {Name: "home", Trackers: []string{kindGitHub}, Orgs: []string{"me"}}}
+	cache := issueCache{FetchedAt: time.Now(), Issues: treeIssues(), Pulls: treePulls()}
+	var out bytes.Buffer
+	runDump(&out, stacks, cache, false, "", "", "")
+	got := out.String()
+	for _, want := range []string{
+		"cache: 6 issues, 7 PRs, fetched ",
+		"  work             pulls  me\n",
+		"order: key\n",
+		"  W-10 [In Progress] jira: story",
+		"  W-1 [Open] jira: epic (updated ",
+		") (not in your list) · conflicts · approved\n",
+		"      ↳ front#1 [open] conflicts: one\n",
+		"      ↳ infra#2 [merged] merged: two\n",
+		"  W-12 [Blocked] jira: alone (updated ",
+		") · all merged\n",
+		"  PRs without a ticket\n    ↳ front#4 [open]: four\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dump lacks %q:\n%s", want, got)
+		}
+	}
+	out.Reset()
+	runDump(&out, stacks, cache, false, "", "", "attention")
+	if !strings.Contains(out.String(), "order: attention\n") || loadSetting(stateDir(), "order") != "key" {
+		t.Errorf("-order is used and not saved:\n%s", out.String())
 	}
 }

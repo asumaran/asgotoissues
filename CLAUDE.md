@@ -6,9 +6,12 @@ Guidance for working in this repository.
 
 `asgotoissues` is a herdr plugin popup that lists the user's open issues (Jira
 tickets and GitHub issues) across every stack configured in
-`~/.claude/asdev.local.md`, grouped by stack, with fuzzy search and a
-glamour-rendered preview of the description. Selecting an issue opens it in
-the browser. Open, pick, exit: the same lifecycle as `asgotopr` and `asgoto`,
+`~/.claude/asdev.local.md`, grouped by stack as a tree (a sub-task under its
+story, the story under its epic, even when the epic is not the user's), with
+the pull requests linked to each ticket and what each one needs (conflicts,
+changes requested, a review, a merge), with fuzzy search and a
+glamour-rendered preview of the description. Selecting a row opens it in the
+browser. Open, pick, exit: the same lifecycle as `asgotopr` and `asgoto`,
 which this repo is modeled on.
 
 Distributed as a herdr plugin (`herdr plugin install asumaran/asgotoissues`; the
@@ -25,28 +28,54 @@ for the config. The charm v2 modules are imported under their canonical
 spelling is rejected by `go get`).
 Files are split by concern but everything stays in `package main`:
 
-- `main.go`: flags (`-version`, `-dump`, `-query`, `-show`), model
+- `main.go`: flags (`-version`, `-dump`, `-query`, `-show`, `-order`), model
   construction, `tea.NewProgram`, post-quit browser open, `runDump` (it writes
-  to an `io.Writer`, so the tests read what `-dump` prints).
+  to an `io.Writer`, so the tests read what `-dump` prints: the tree, with
+  the glyphs, the indent, the ghosts marked and the PRs with their flags).
 - `config.go`: front-matter extraction from `asdev.local.md`, stack parsing
   (config order preserved via a `yaml.Node` walk), which trackers a stack
   lists (`issues:`), netrc + env credentials for Jira.
-- `provider.go`: the tracker-neutral side: the `issue` struct, the
-  `provider` interface (`kind`, `fetch`), `sourcesOf` (one source per tracker
-  of a stack), `mergeStacks` (fresh-or-cached per source), tea.Cmd plumbing.
+- `provider.go`: the tracker-neutral side: the `issue` struct (with its
+  parent's key, summary and URL, and `Ghost` for one fetched as context), the
+  `provider` interface (`kind`, `fetch` returning `fetched`: issues or PRs),
+  `sourcesOf` (one source per tracker of a stack, plus the pulls source of a
+  stack with GitHub owners), `mergeStacks` and `mergePulls` (fresh-or-cached
+  per source), `backfillParentURLs` (an old snapshot's parents get their
+  URL), tea.Cmd plumbing.
 - `jira.go`: the Jira provider: per-stack search (cloud
   `/rest/api/2/search/jql` with `nextPageToken`, server `/rest/api/2/search`
-  with `startAt`), issue mapping.
+  with `startAt`), issue mapping, and the parents the list does not hold
+  fetched with `key in (…)` level by level (`ghosts`, three levels at most).
 - `github.go`: the GitHub provider: issue searches through `gh api graphql`
-  (`ghRun`, in `ghrun.go`, is the seam tests replace), issue mapping, state
-  from labels.
+  (`ghRun`, in `ghrun.go`, is the seam tests replace; `ghSearch` pages any
+  node type), issue mapping, state from labels, the parent and the parent's
+  parent nested in the query and turned into ghosts.
+- `pull.go`: the `pull` struct (the cache's format for a PR), `flags` (what a
+  PR needs, in the order the row shows them, and its level), `pullRefs` (the
+  tickets and issues a PR names: strong in the branch, the title and the
+  closing references, weak in the body).
+- `pulls.go`: the pulls source: three searches per stack under its owners
+  (open PRs I am involved in, my PRs merged in the last 30 days, and the
+  URLs of the PRs whose review is asked of me), the viewer's login for
+  `Mine`, node mapping, `carryMergeable` (a merge state GitHub has not
+  computed yet keeps the cached one while the branches did not move).
+- `tree.go`: the list as a tree: `linkPulls` (a PR under every ticket of its
+  stack it names), `buildTree` (nesting by the parent's URL, PR rows under
+  their ticket, the group of my PRs without a ticket, the query walk that
+  keeps the ancestors of a hit), the order modes and the PRs modes,
+  `ownAttention` (a ticket's level: the worst of its PRs and, in the tree,
+  its descendants).
+- `setting.go`: `loadSetting`/`saveSetting`: a setting the tool remembers
+  between runs, one plain-text file each in the state dir. The same file in
+  every tool of the family that needs it.
 - `wiki.go`: Jira wiki markup → Markdown (headings, lists, code/noformat/
   quote blocks, tables, links, mono/bold/italic, mentions).
-- `cache.go`: `issuecache.json` load/save (through `jsonfile.go`), 60s
-  freshness debounce, and `stateDir()`, a wrapper over `stateDirFor`
-  (`statedir.go`).
-- `filter.go`: entries, corpora, fuzzy hits, `matchBonus` ranking, row
-  building, header-skipping navigation.
+- `cache.go`: `issuecache.json` (issues and pulls) load/save (through
+  `jsonfile.go`), 60s freshness debounce, and `stateDir()`, a wrapper over
+  `stateDirFor` (`statedir.go`).
+- `filter.go`: entries (a ticket and its PRs), the row kinds, corpora, fuzzy
+  hits, `matchBonus` ranking; `buildRows` scores the hits and hands them to
+  the tree.
 - `match.go`: `findTight`/`tighten`, the fuzzy matcher with one correction: it
   is greedy (first candidate for each rune, left to right), so a query that
   occurs in one piece could still match scattered letters before it. When the
@@ -74,9 +103,10 @@ Files are split by concern but everything stays in `package main`:
   shows it when it is still the one awaited, and drops one rendered before the
   style flipped). The same file in every tool of the family that renders
   Markdown.
-- `listmouse.go`: `inList`, `rowUnder`, `wheelKey`: the mouse over the list.
-  The wheel goes through the same code as the arrows; a click moves the
-  cursor and never opens anything. The same file in every tool of the family.
+- `listmouse.go`: `inList`, `rowUnder`, `rowOfLine`, `wheelKey`: the mouse
+  over the list. The wheel goes through the same code as the arrows; a click
+  moves the cursor and never opens anything (`rowOfLine` finds the row when
+  rows take more than one line). The same file in every tool of the family.
 - `prompt.go`: the filter input: its prompt (with the tool's name only outside
   herdr's popup), the placeholder, the `(dev)` mark on the edge over the
   input. `typeInto` hands a message to the input and reports whether the query
@@ -96,7 +126,8 @@ Files are split by concern but everything stays in `package main`:
 - `listnav.go`: `listNav`: the keys that move the cursor through a list and
   where each one takes it, group headers skipped. `scrollTo` keeps the cursor
   in view together with the row `withHeader` names: the header of its group
-  when that is the row right above. `emptyList` is what a list says instead of
+  when that is the row right above; `scrollSpan` is the same for rows that
+  take more than one line (the offset is in lines). `emptyList` is what a list says instead of
   rows: the error that kept it from loading, in the error color, `No matches`,
   or the tool's own reason. The same file in every tool of the family.
 - `highlight.go`: `highlight`/`highlightFrom`, `matchOver`, `onSel`,
@@ -140,8 +171,9 @@ Files are split by concern but everything stays in `package main`:
   that opens something.
 - `ghrun.go`: `ghRun`: running the GitHub CLI. A failure is said the way gh
   said it (the first line of its stderr), and a missing gh reads `gh not found
-  (install the GitHub CLI)`. The tests replace it. The same file in every tool
-  of the family that runs gh.
+  (install the GitHub CLI)`; the stdout gh printed comes back with the error
+  (a GraphQL response with errors still carries its data). The tests replace
+  it. The same file in every tool of the family that runs gh.
 - `jsonfile.go`: `readJSONFile`, `writeJSONFile`, `writeFileAtomic`: a JSON
   cache in the state dir. A file that is missing or does not parse reads as
   nothing, and a write goes through a temporary file and a rename, so a popup
@@ -160,11 +192,15 @@ Files are split by concern but everything stays in `package main`:
   and `sizePanes` (the list and the preview get their share of the main
   section). Copied, not imported, like `frame.go`: the same file ships in
   asgotopr, asgotonotes, asgotosession and asgotochanged.
-- `ui.go`: the bubbletea model/Update/View, styles. The browser is opened
-  from `main.go` after the TUI quits (`openURL`, `openurl.go`).
+- `ui.go`: the bubbletea model/Update/View, styles, the options (`order`,
+  `prs`) and the rows (a glyph, the indent, the key, the flags of a PR). The
+  browser is opened from `main.go` after the TUI quits (`openURL`,
+  `openurl.go`).
 - `preview.go`: glamour rendering as a `tea.Cmd`, per-(URL,width,updated)
-  render cache, instant non-glamour header (`rightColumn` puts one blank line
-  under it).
+  render cache, the instant non-glamour headers of a ticket (with its parent
+  and whether every PR is merged) and of a PR (where it is, what it needs,
+  the review, checks and merge facts); `rightColumn` puts one blank line
+  under the header and `syncPreviewHeight` fits the body under it.
 
 ## Build & run
 
@@ -173,6 +209,7 @@ go build -o asgotoissues .    # plugin runs ./asgotoissues from the repo root
 ./asgotoissues -dump          # stacks + issues, no TTY (refreshes when stale)
 ./asgotoissues -dump -query x # the matches and their scores instead of the list
 ./asgotoissues -dump -show KEY # prints the wiki → Markdown conversion of KEY
+./asgotoissues -dump -order attention # the tree in that order (created, updated, key, attention); not saved
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 + pyte)
 herdr plugin link "$PWD"   # link does NOT run [[build]]; go build yourself
@@ -227,8 +264,12 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   message takes the help line's place (`footLine`): a flash for a moment (a
   confirmation in green, a key that could do nothing in the error color),
   else an error or a notice in the error color.
-  This tool has no options, so the panel lists the keys alone and the help
-  line says `f1 help`.
+  The options are the order of every level of the tree (`Order`, also cycled
+  by `ctrl+s`, which names the next one on its key), which PR rows show
+  (`PRs`: all, open, attention), how many lines a row takes (`Rows`: two
+  lines, one line) and whether the merged work shows (`Merged`: show,
+  hide); each is saved as a setting (`setting.go`) and the help line says
+  `f1 options`.
 - **Filter matches** look the same in every tool of the family and come from
   one place, `highlight.go` (the same file in each repo; it also owns `stSel`
   and `stMatch`): a match is the match color plus an underline on top of the
@@ -246,6 +287,126 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   (`overList`) it moves the selection through the same code as the arrow keys,
   anywhere else it scrolls the description. A left click on an issue row moves
   the selection and never opens anything.
+- **The list is a tree** (`tree.go`): under each stack a ticket hangs from
+  the ticket its `ParentURL` names (never a display key: GitHub keys are
+  qualified per list), whatever the depth. Jira's `parent` field gives the
+  story of a sub-task and the epic of a story (Server/DC: sub-tasks only, an
+  epic is an Epic Link custom field there); GitHub's `parent` gives a
+  sub-issue's parent. A parent that is not in the user's list (an epic
+  assigned to someone else, a Done one) is fetched as a **ghost** (Jira: one
+  `key in (…)` request per level, three at most; GitHub: the parent's parent
+  nested in the query): a whole issue with `ghost: true`, dim in the list,
+  selectable, its preview says `not in your list`, never counted. A ghost
+  sorts by the newest of its subtree, so an old epic sits with the work
+  under it. A parent that is its own descendant stays a root.
+- **PRs come from GitHub and are linked locally** (`pulls.go`, `linkPulls`).
+  Every stack with `github.org`/`orgs` has a pulls source, whether or not
+  its `issues:` lists GitHub (a Jira stack's PRs live in its org). Three
+  searches under the owners: the open PRs I am involved in
+  (`involves:@me`), my PRs merged in the last 30 days (a ticket whose PR
+  just merged still shows it; closed-unmerged ones are noise and never
+  fetched), and, URL only, the open PRs whose review is asked of me
+  (`review-requested:@me`: `involves` does not cover it, and a request to a
+  team cannot be told from the PR's reviewer list). A PR carries `Refs`
+  (strong: ticket keys in the head branch and the title, where Jira itself
+  reads them; the issues its closing keywords name; GitHub's
+  `closingIssuesReferences`) and `WeakRefs` (keys in the body, as text or as
+  `/browse/` links: a stacked PR says "depends on ESHOP-2707", a body lists
+  related tickets). A PR hangs from every ticket **of its stack** whose
+  `ref()` (the key; `owner/repo#N` for a GitHub issue) is in its strong refs,
+  and only when none is does the weak set count. One PR under several
+  tickets and several PRs under one both follow; a PR's rows are told apart
+  by `row.id()` (the parent's URL and its own). My PRs that name no ticket
+  close their stack under `PRs without a ticket`; other people's are dropped.
+  A GraphQL response with errors is still read (`ghSearch`): a field that
+  fails on one node must not kill the source.
+- **What a PR needs** (`pull.flags`), derived from the fetched fields, never
+  cached: `merged` and `closed` (dim) stop everything else; `conflicts`
+  (`CONFLICTING` or merge state `DIRTY`), `changes requested`, `ci failed`,
+  `base merged` (a stacked PR whose base branch is the head of a merged PR)
+  are bad on my PR and a warning on someone else's; `review requested` is
+  bad whoever's PR it is; `behind base` (merge state `BEHIND`, the base
+  moved) and `ci pending` warn; `on #N` (stacked on an open PR) and `draft`
+  say so; `approved` (ok, ready to merge) only when nothing blocks it and no
+  check runs; `awaiting review` (warn) with `REVIEW_REQUIRED` or reviewers
+  pending, never on a draft, never on a PR with no rule and no request (a
+  personal repo must not read as waiting forever). Levels: bad 3 > ok 2 >
+  warn 1 > none 0. A ticket's level (`ownAttention`, then the tree) is the
+  worst of its PRs and its descendants' (`needs`: their flags that say
+  something, once each, worst first, `mergeNeeds`), a blocked ticket without
+  a PR is a warning, and a ticket whose every PR is merged reads `all
+  merged` (ok: move it). The level orders the list (`attention`); the
+  words are what the list shows. `mergeable`/`mergeStateStatus` `UNKNOWN` (GitHub computes them
+  lazily) keep the cached values while `headRefOid`/`baseRefOid` did not
+  move (`carryMergeable`).
+- **Rows** (`rowLines`, `rowLine`, `pullLine`, `detailLine`): every
+  selectable row starts with the gutter (two cells: the cursor's mark on the
+  selected one), then the indent; the title comes last on its line, so it
+  is what a narrow list cuts. There is no glyph column: what a row needs is
+  said in words, in its details line (a ticket's collects its PRs' and its
+  descendants'), so nothing has to be decoded. **The list is two tones**
+  (`stDetail`, `stDetailSel`): a row's first line is plain (the key, the
+  status and the flags carry no color there), its details line is dim, and
+  under the selection the details are a lighter grey (color 7) over the
+  background, because the dim tone is the background's own color and would
+  vanish. The state and level colors belong to the preview header
+  (`stateStyle`, `levelStyle`, `flagsLine`), not to the list. A ghost or a
+  context row is dim on its first line too: it is not mine, or not a hit. The indent is the tree's own
+  (`row.col`): a child row, a PR or a child ticket, starts where its
+  parent's title starts (one space past the parent's key, from wherever the
+  parent is set in), so a ticket, its details, its PRs and its children
+  share one left edge. By default a ticket or a PR takes
+  **two lines** (`rowsMode`, the `Rows` option): the title on the first, its
+  details dim under it, so the titles and the glyphs stay what the eye
+  scans. A ticket: `<indent><key> <summary>` (one space between
+  the key and the summary, no shared key column; the key is one color for
+  every ticket, `stKey`, dim for a ghost or a context row: the state is said
+  in words, never by the key's color), then, aligned under the summary (one
+  space past the key), `<status> · <type> · updated <age> · <not in your
+  list> · <N PRs> · <all merged> · <needs>`. A PR: `<indent>↳ <repo#N>
+  <title>`, then, under the title, `open · <flags> · by <author, when not
+  me> · <age>`, the repo always in the key
+  (`owner/repo#N` when two
+  owners share a name, the rule of `qualifyClashingKeys`), the key in the
+  match style when the query is in it or in the branch. With one-line rows
+  a ticket is `<indent><key> [<status>] <summary>` (what its PRs need is on
+  their rows) and a PR `<indent>↳ <repo#N> <flags · joined> <title>`.
+  Headers and
+  the group line always take one line. The list is drawn in lines and the
+  rows know theirs (`lineOf`, `lines`): `ensureVisible` keeps the cursor's
+  lines in view (`scrollSpan`, `listnav.go`), a click on either line selects
+  the row (`rowOfLine`, `listmouse.go`), a page is a page of rows, and the
+  selection covers both lines. `-dump` prints the same words after a
+  ticket's line. The preview header's height varies (a PR has
+  more facts); `syncPreviewHeight` fits the body under it on every selection
+  change and resize.
+- **Order** is a panel option and `ctrl+s` (`orderMode`): every level of
+  the tree independently. `created` (default: newest first, `newerIssue`),
+  `updated` desc, `key` (project, then number asc), `attention` (level desc,
+  then blocked, doing, to do, then updated desc). Ties keep the fetched
+  order; a saved value that is none of them reads as `created`; with a query
+  the scores decide instead. A ticket's PR rows come before its child
+  tickets, open before merged, newest activity first, always. `-dump -order`
+  beats the saved setting and never writes it.
+- **PRs option** (`prsMode`): `all`, `open` (merged rows hidden),
+  `attention` (only PRs with a bad or warn flag).
+- **Rows option** (`rowsMode`): `two` (default) or `one` line per ticket or
+  PR; the one-line list holds twice the rows of a popup, the two-line one
+  loses no title.
+- **Folding** (`fold`, `m.collapsed`): `space` on a ticket, while the filter
+  is empty (with text in it space is text, like `q`), folds its PRs and
+  children away and marks it with `▸` in the gutter (the cell before the
+  indent, so the key and the details stay put); space again unfolds it. On a PR row it folds the PR's
+  ticket and the cursor moves there. A ticket with nothing under it flashes
+  `nothing to fold`. Folds are by URL, for the run only, and a query shows
+  everything (a search never hides a hit). A folded ticket still carries
+  what its hidden PRs and children need.
+- **Merged option** (`hideMerged`, saved as `merged`: `show`/`hide`): hide
+  leaves out the merged PR rows everywhere and the tickets with nothing
+  left under them (`node.done`: every PR merged, or none on a ghost, and
+  every child done), so the list is the work that is not finished. A hidden
+  ticket does not answer a query either. The counter still counts it in the
+  total (`2/3`). `-dump` shows everything.
 - **Providers**: a tracker is a `provider` that returns normalized `issue`s.
   Whatever is tracker-specific is settled at fetch time and stored on the
   issue: `State` (todo, doing, blocked) drives the colors, `Meta` holds the
@@ -254,10 +415,12 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   the filter and the preview never ask which tracker an issue came from. To
   add a tracker: implement `provider`, give it a kind, handle the kind in
   `sourcesOf` and `stackTrackers`.
-- **The cache file is a contract**: `issue`'s JSON tags are the format of
-  `issuecache.json` and of the fixtures in `scripts/pty-check.py`. New fields
-  are `omitempty` and an issue without them must keep working (no `Source`
-  means Jira, no `State` falls back to the Jira status fields), so a snapshot
+- **The cache file is a contract**: `issue`'s and `pull`'s JSON tags are the
+  format of `issuecache.json` and of the fixtures in `scripts/pty-check.py`.
+  New fields are `omitempty` and an issue without them must keep working (no
+  `Source` means Jira, no `State` falls back to the Jira status fields, no
+  `parent_url` is derived from the parent key and the stack's site for Jira
+  (`backfillParentURLs`), no `pulls` is a list without PRs), so a snapshot
   written by an older version still renders.
 - **Config source is asdev's file, on purpose**: one place to declare a
   stack for both the Claude plugin and this picker. Only
@@ -266,9 +429,10 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   lists Jira when it has a `jira.base_url`, so a config that only knows about
   Jira needs no changes.
 - **GitHub goes through `gh`**, like asgotopr: no token handling here, and
-  the user is whoever `gh` is logged in as. A stack lists the open issues
-  assigned to that user under its owners (`assignee:@me`), one search for
-  all of them.
+  the user is whoever `gh` is logged in as (`viewer { login }` is what makes
+  a PR mine). A stack lists the open issues assigned to that user under its
+  owners (`assignee:@me`), one search for all of them; its PRs take three
+  more.
 - **Jira auth**: `~/.netrc` (by host) beats the env var, because the plugin
   process may not inherit shell rc exports. Cloud = basic (email + token);
   server = bearer PAT unless `username` is set.
@@ -279,9 +443,11 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   fixed and the user is always the token owner).
 - **Caching**: stale-while-revalidate; first frame always renders from
   `issuecache.json`; snapshots fresher than 60s skip the refresh. Sources
-  (one per tracker of a stack) refresh concurrently, one tea.Cmd each; a
-  failed source keeps its cached issues and the snapshot's `FetchedAt` is NOT advanced, so the next open
-  retries. Errors take the help line, never a modal; the refresh mark sits
+  (one per tracker of a stack, plus its pulls source) refresh concurrently,
+  one tea.Cmd each; a failed source keeps its cached issues or PRs (a pulls
+  error reads `<stack> PRs: …`) and the snapshot's `FetchedAt` is NOT
+  advanced, so the next open retries; a source that answers with nothing
+  clears its part. Errors take the help line, never a modal; the refresh mark sits
   on the edge over the input.
 - **A failed refresh** keeps the cached list on screen. The error (`netErr`,
   the failed sources joined) takes the help line through the shared
@@ -294,8 +460,8 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   cannot be read keeps the tool from starting and goes through the shared
   `fatal` (`fatal.go`): held until enter in the popup, stderr and exit 1 in a
   shell.
-- **Selection is deliberately just "open in browser"**, executed after quit
-  because quitting closes the popup. `openURL` (`openurl.go`, the same file
+- **Selection is deliberately just "open in browser"**, a ticket, a ghost or
+  a PR alike, executed after quit because quitting closes the popup. `openURL` (`openurl.go`, the same file
   in every tool that opens the browser) prefers an AppleScript `make new tab`
   in Chrome's front window when Chrome is running with a window, because
   `open <url>` lets Chrome pick its `profile.last_used`, which is not the
@@ -303,8 +469,9 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `ASGOTOISSUES_OPENER` replaces the whole thing. Jumping to a checkout / creating a
   worktree for an issue was considered and rejected for v1. `enter` and
   `ctrl+o` both open.
-- **Copy**: `ctrl+y` copies the issue key (`it.Key`) with `copyCmd` (the
-  shared `clipboard.go`) and the help line flashes `copied <key>`
+- **Copy**: `ctrl+y` copies the issue key (`it.Key`), or a PR's URL on a PR
+  row, with `copyCmd` (the shared `clipboard.go`) and the help line flashes
+  `copied <key>`
   (`flash.go`), ahead of any network error. A key that could do nothing
   (`nothing to copy`, `copy failed: ...`, `nothing to open`) flashes in the
   error color instead of green (`flash.fail`, `flashErrMsg`). `ASGOTOISSUES_CLIPBOARD` replaces
@@ -320,35 +487,46 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   no `tea.WithAltScreen` program option in v2. `View()` builds the
   `tea.View` from `render()`, which holds the frame text and is what the
   tests assert on.
-- Ordering: stacks in config order; issues within a stack by `created`
-  desc (`newerIssue`), falling back to key number, then `updated`.
+- Ordering: stacks in config order; each level of a stack's tree by the
+  order option (`created` by default: `newerIssue`, falling back to key
+  number, then `updated`).
 - Search corpus: summary + key/number + status/type/project/stack/parent
-  and the provider's meta parts (repo, labels), kept as shown and matched
+  key and summary/the keys, numbers and branches of the linked PRs and the
+  provider's meta parts (repo, labels), kept as shown and matched
   against the query as typed (the matcher folds case itself, and its offsets
   are bytes into the string the row highlights; the bonuses compare whole
   words whatever their case); exact key +30, exact number
-  +20 (the part after the last `-` or `#`), key prefix with `-` or `#` +10, exact
-  stack/project +10, key hit +2.
-- **A query makes the list a search result**: tickets are ranked, best match
-  first, the stack that holds it on top with its tickets kept together, and
-  the cursor sits on the first one (`rank` in `rank.go`, the same file in
-  every picker of the family). Equal scores go to the newer `updated`. A score
-  says how good the match is and nothing about the length of the text
-  (`match.go`). Without a query the order is the one above.
+  +20 (the part after the last `-` or `#`), key prefix with `-` or `#` +10,
+  exact key or number of a linked PR +20, exact stack/project +10, key hit +2.
+- **A query keeps the tree**: a ticket is a hit when it matches, the
+  ancestors that lead to a hit stay as context rows (dim, never a hit, no
+  highlight), PR rows stay under the hits, siblings go by the best score in
+  their subtree, the stacks by their best hit (`rank` in `rank.go`, the same
+  file in every picker of the family), and the cursor sits on the first hit
+  (`firstHit`). Ties keep the tree's own order. A score says how good the
+  match is and nothing about the length of the text (`match.go`). Without a
+  query the order is the one above.
 
 ## Testing
 
 Unit tests cover the pure logic (config parsing, netrc, time parsing,
-merge fallback per source, the GitHub provider against a fake `ghRun`,
-issues cached by older versions, wiki conversion, ranking, grouping, key handling, partial
+merge fallback per source, the GitHub and pulls providers against a fake
+`ghRun` (`fakeGh` answers by the `q=` argument, so it cannot validate the
+GraphQL document: a live `-dump` against a stale, isolated state dir is the
+check that the queries are accepted), the Jira ghosts against an `httptest`
+server, issues cached by older versions, wiki conversion, the references
+and flags of a PR, linking, the tree (nesting, ghosts, the query walk, the
+order and PRs modes, attention), ranking, grouping, key handling, partial
 refresh failure, View content). `TestMain` points `HERDR_PLUGIN_STATE_DIR`
-at a temp dir so tests never touch the real cache.
+at a temp dir so tests never touch the real cache; a test that presses a
+key under the panel or saves a setting takes a temp dir of its own.
 
 For end-to-end verification without a TTY, `scripts/pty-check.py ./asgotoissues`
 (python3 + `pyte`) spawns the binary on a pty, answers the terminal queries,
 replays keystrokes and asserts on pyte-rendered frames, in a throwaway sandbox
 (fake `HOME`, synthetic `ASGOTOISSUES_CONFIG`, empty netrc, a fresh synthetic
-ticket cache so nothing is fetched, logging stubs as `ASGOTOISSUES_OPENER` and `ASGOTOISSUES_CLIPBOARD`). The v2 renderer repaints with scroll regions, which pyte ignores, so the
+cache of tickets, a ghost parent and PRs so nothing is fetched, logging stubs
+as `ASGOTOISSUES_OPENER` and `ASGOTOISSUES_CLIPBOARD`). The v2 renderer repaints with scroll regions, which pyte ignores, so the
 driver forces a full redraw (pty resize + SIGWINCH) before reading a frame.
 
 ## Commits & branches

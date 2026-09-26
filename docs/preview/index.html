@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>asgotoissues: preview</title>
+<style>
+ body{background:#11111b;color:#cdd6f4;font:14px -apple-system,system-ui,sans-serif;margin:24px;max-width:1500px}
+ h1{font-size:20px;margin:0 0 4px} p.lead{color:#999;margin:0 0 24px}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(640px,1fr));gap:24px}
+ .card{background:#181825;border:1px solid #313244;border-radius:8px;padding:14px 16px}
+ .card h2{font-size:15px;margin:0 0 4px} .card p{color:#9a9a9a;margin:0 0 10px;font-size:13px;line-height:1.4}
+ pre{margin:0;background:#1e1e2e;border:1px solid #45475a;border-radius:6px;padding:10px 12px;
+     font:14px/1.3 "Berkeley Mono","BerkeleyMono Nerd Font",Menlo,monospace;color:#cdd6f4;overflow:auto;white-space:pre}
+ .h{color:#94e2d5;font-weight:bold}       /* stack header, ANSI 6 bold */
+ .d{color:#585b70}                         /* dim, ANSI 8 */
+ .sel{background:#585b70;font-weight:bold;display:inline-block;width:100%} /* selection, ANSI 8 bg */
+ .sd{color:#a6adc8;font-weight:normal}     /* details over the selection, ANSI 7 */
+ .b{font-weight:bold;color:inherit}           /* touched today */
+ .g{color:#89d88b} .y{color:#f9e2af} .r{color:#f37799} .c{color:#74a8fc} /* phase colors, variant A2 */
+ .rule{color:#45475a}
+ .legend{margin-top:28px;color:#aaa;font-size:13px;line-height:1.6}
+ code{background:#222;padding:1px 4px;border-radius:3px}
+
+ .soft50 pre .g,.soft50 pre .y,.soft50 pre .r,.soft50 pre .c{opacity:.5}
+ .soft70 pre .g,.soft70 pre .y,.soft70 pre .r,.soft70 pre .c{opacity:.7}
+
+ @font-face{font-family:"Berkeley Mono";src:local("Berkeley Mono"),local("BerkeleyMono-Regular"),url(BerkeleyMono-Regular.otf) format("opentype");font-weight:normal}
+ @font-face{font-family:"Berkeley Mono";src:local("Berkeley Mono Bold"),local("BerkeleyMono-Bold"),url(BerkeleyMono-Bold.otf) format("opentype");font-weight:bold}
+ .grid{grid-template-columns:repeat(auto-fill,minmax(min(640px,100%),1fr))!important}
+ @media (max-width:700px){body{margin:10px} pre{font-size:11px} .card{padding:10px}}
+ .ln{white-space:pre;min-height:1.3em}
+ pre{touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+ .ln.cur{background:#585b70;font-weight:bold} .ln.cur .d,.ln.cur .sd{color:#a6adc8}
+ .k0{color:#f5c2e7} .k1{color:#89b4fa} .k2{color:#ffaf87} .k3{color:#d7afff} .kr{color:#6bd7ca}
+ .tc{color:#6c7086} .ln.cur .tc{color:#a6adc8}
+ /* the tree lines drawn as a terminal draws box characters: edge to edge of the cell, whatever the line height */
+ .bx{--c:#6c7086;display:inline-block;vertical-align:top;height:1.3em;color:transparent;position:relative}
+ .ln.cur .bx{--c:#a6adc8}
+ .bx::before,.bx::after{content:'';position:absolute}
+ .bx.v::before,.bx.t::before{left:50%;top:0;bottom:0;border-left:1px solid var(--c)}
+ .bx.l::before{left:50%;top:0;height:50%;border-left:1px solid var(--c)}
+ .bx.h::after{left:0;right:0;top:50%;border-top:1px solid var(--c)}
+ .bx.t::after,.bx.l::after{left:50%;right:0;top:50%;border-top:1px solid var(--c)}
+ .k0,.k1,.k2,.k3{text-transform:lowercase}
+ pre,pre *{font-weight:normal !important}
+ .ga{color:#ff87d7} .st{color:#5fff87} .us{color:#ffff87} .ut{color:#8a8a8a} /* ↑ + ! ? as the prompt and the statusline: 256-color 212, 84, 228, 245 */
+ .soft50 pre .ga,.soft50 pre .st,.soft50 pre .us,.soft50 pre .ut{opacity:.5}
+ .levels{margin:0 0 6px;font:12px/1.6 "Berkeley Mono",Menlo,monospace;color:#6c7086}
+ .levels button{font:inherit;color:#a6adc8;background:#313244;border:1px solid #45475a;border-radius:4px;padding:2px 8px;margin-right:6px;cursor:pointer}
+ .levels button.on{color:#1e1e2e;background:#89b4fa;border-color:#89b4fa}
+ .bx.hd::after{left:0;right:0;top:50%;border-top:1px dashed var(--c)} /* ╌, a PR's branch */
+</style></head><body>
+<div class="levels" id="bullets" style="position:sticky;top:0;z-index:5;background:#11111b;padding:6px 0">PR bullet → </div>
+<div class="levels" id="arrows" style="position:sticky;top:34px;z-index:5;background:#11111b;padding:6px 0">fold arrows → </div>
+<script>
+// Demo only: the PR bullet to compare, switched from the bar at the top.
+const BULLETS = ['●', '○', '◦', '◉', '◎', '⊙'];
+window.BULLET = '○';
+// Demo only: the fold arrows to compare (unfolded, folded).
+const ARROWS = [['▾', '▸'], ['▼', '▶\uFE0E'], ['▽', '▷'], ['⌄', '›'], ['⊟', '⊞'], ['−', '+']];
+window.ARROW = ARROWS[1];
+(() => {
+  const bar = document.getElementById('arrows');
+  ARROWS.forEach(pair => {
+    const b = document.createElement('button'); b.textContent = pair[0] + ' ' + pair[1]; if (pair === window.ARROW) b.className = 'on';
+    b.addEventListener('click', () => {
+      window.ARROW = pair; (window.REPAINT || []).forEach(f => f());
+      bar.querySelectorAll('button').forEach(y => y.classList.toggle('on', y === b));
+    });
+    bar.append(b);
+  });
+})();
+// The indent: 4 cells per level, a ticket's details and the keys of what it holds 4 past its key, the PR bullets 2 past it.
+window.STEP = 4; window.DET = 4; window.BUL = 2;
+(() => {
+  const bar = document.getElementById('bullets');
+  BULLETS.forEach(ch => {
+    const b = document.createElement('button'); b.textContent = ch; if (ch === window.BULLET) b.className = 'on';
+    b.addEventListener('click', () => {
+      document.querySelectorAll('span.tc').forEach(x => { if (BULLETS.includes(x.textContent)) x.textContent = ch; });
+      window.BULLET = ch;
+      bar.querySelectorAll('button').forEach(y => y.classList.toggle('on', y === b));
+    });
+    bar.append(b);
+  });
+})();
+</script>
+
+<h1>asgotoissues: the list as a tree, a preview</h1>
+<p class="lead">Made-up data, drawn as the terminal would draw it: Berkeley Mono (when installed, or the <code>.otf</code> files dropped next to this page) and the catppuccin-mocha palette. Only a preview: the bars and buttons stand in for keys, and the tree guides are CSS borders because a browser does not draw box characters edge to edge. Tap a row with an arrow to fold it.</p>
+<h1 style="margin-top:32px">Three ticket levels before a PR</h1>
+<div class="grid">
+<div class="card soft50"><h2>Show: all · Group: tree</h2>
+<p>Epic › story › sub-task › PR (SHOP-900 › SHOP-910 › SHOP-915 › PRs), then an initiative with four levels before its PR (SHOP-800 › SHOP-820 › SHOP-825 › SHOP-826 › PR), for the level 3 color. Titles are the Spanish summaries the tool writes.</p>
+<pre><span class="d">▾</span> <span class="h">acme</span>
+ <span class="d">▾</span> <span class="k0">SHOP-900</span> Checkout en una sola página para todas las marcas
+       <span class="g">in progress</span><span class="d"> · </span><span class="d">not yours</span><span class="d"> · </span><span class="d">today</span>
+     <span class="d">▾</span> <span class="k1">SHOP-910</span> Checkout: pagar con la tarjeta guardada
+           <span class="g">in progress</span><span class="d"> · </span><span class="d">2d</span>
+           ↳ <span class="kr">web-app#9102</span> Tarjeta guardada: el selector de tarjetas en el paso de pago
+               <span class="y">in review</span><span class="d"> · </span><span class="d">behind master</span><span class="d"> · </span><span class="d">2d</span>
+         <span class="d">▾</span> <span class="k2">SHOP-915</span> Tarjeta guardada: el formulario recuerda la última tarjeta usada
+               <span class="g">in progress</span><span class="d"> · </span><span class="d">today</span>
+               ↳ <span class="kr">web-app#9120</span> Última tarjeta: el formulario la preselecciona al entrar
+                   <span class="y">in review</span><span class="d"> · </span><span class="r">conflicts</span><span class="d"> · </span><span class="us">!2</span><span class="d"> · </span><span class="d">today</span>
+               ↳ <span class="kr">payments-api#431</span> Última tarjeta: el endpoint devuelve la usada en el último pedido
+                   <span class="g">approved</span><span class="d"> · </span><span class="d">1d</span>
+         <span class="d">▾</span> <span class="k2">SHOP-916</span> Tarjeta guardada: el backend valida el CVV antes de cobrar
+               <span class="g">in progress</span><span class="d"> · </span><span class="d">today</span>
+               ↳ <span class="kr">payments-api#437</span> Validar CVV: rechaza el cobro sin CVV válido
+                   <span class="d">draft</span><span class="d"> · </span><span class="r">ci failed</span><span class="d"> · </span><span class="ga">↑1</span><span class="d"> · </span><span class="d">stacked on #431</span><span class="d"> · </span><span class="d">today</span>
+           <span class="k2">SHOP-917</span> Tarjeta guardada: textos de error cuando la tarjeta caduca
+               <span class="c">open</span><span class="d"> · </span><span class="d">3w</span>
+     <span class="d">▾</span> <span class="k1">SHOP-911</span> Checkout: el resumen del pedido queda fijo al hacer scroll
+           <span class="g">validating</span><span class="d"> · </span><span class="d">1w</span>
+           ↳ <span class="kr">web-app#9050</span> Resumen fijo: la columna del pedido acompaña el scroll
+               <span class="g">merged</span><span class="d"> · </span><span class="d">1w</span>
+ <span class="d">▾</span> <span class="k0">SHOP-800</span> Pagos: reducir el abandono del checkout
+       <span class="g">in progress</span><span class="d"> · </span><span class="d">not yours</span><span class="d"> · </span><span class="d">today</span>
+     <span class="d">▾</span> <span class="k1">SHOP-820</span> Pagos: Bizum en todas las marcas
+           <span class="g">in progress</span><span class="d"> · </span><span class="d">not yours</span><span class="d"> · </span><span class="d">today</span>
+         <span class="d">▾</span> <span class="k2">SHOP-825</span> Bizum: la pantalla de confirmación del pago
+               <span class="g">in progress</span><span class="d"> · </span><span class="d">today</span>
+             <span class="d">▾</span> <span class="k3">SHOP-826</span> Confirmación: estado de espera mientras el banco responde
+                   <span class="g">in progress</span><span class="d"> · </span><span class="d">today</span>
+                   ↳ <span class="kr">web-app#9133</span> Espera de Bizum: pantalla de carga con reintento
+                       <span class="y">in review</span><span class="d"> · </span><span class="r">to answer</span><span class="d"> · </span><span class="ut">?1</span><span class="d"> · </span><span class="d">today</span></pre></div>
+<div class="card soft50"><h2>Show: all · Group: phase</h2>
+<p>The same data by phase: each row carries its whole path on one line.</p>
+<pre><span class="h">acme</span>
+ <span class="rule">── PR in review (4) ────────────────────────────</span>
+  <span class="k0">SHOP-900</span> › <span class="k1">SHOP-910</span> › <span class="kr">web-app#9102</span> Tarjeta guardada: el selector de tarjetas en el paso de pago
+      <span class="y">in review</span><span class="d"> · </span><span class="g">in progress</span><span class="d"> · </span><span class="d">behind master</span><span class="d"> · </span><span class="d">2d</span>
+  <span class="k0">SHOP-900</span> › <span class="k1">SHOP-910</span> › <span class="k2">SHOP-915</span> › <span class="kr">web-app#9120</span> Última tarjeta: el formulario la preselecciona al entrar
+      <span class="y">in review</span><span class="d"> · </span><span class="r">conflicts</span><span class="d"> · </span><span class="us">!2</span><span class="d"> · </span><span class="g">in progress</span><span class="d"> · </span><span class="d">today</span>
+  <span class="k0">SHOP-900</span> › <span class="k1">SHOP-910</span> › <span class="k2">SHOP-915</span> › <span class="kr">payments-api#431</span> Última tarjeta: el endpoint devuelve la usada en el último pedido
+      <span class="g">approved</span><span class="d"> · </span><span class="g">in progress</span><span class="d"> · </span><span class="d">1d</span>
+  <span class="k0">SHOP-800</span> › <span class="k1">SHOP-820</span> › <span class="k2">SHOP-825</span> › <span class="k3">SHOP-826</span> › <span class="kr">web-app#9133</span> Espera de Bizum: pantalla de carga con reintento
+      <span class="y">in review</span><span class="d"> · </span><span class="r">to answer</span><span class="d"> · </span><span class="ut">?1</span><span class="d"> · </span><span class="g">in progress</span><span class="d"> · </span><span class="d">today</span>
+ <span class="rule">── draft PR (1) ────────────────────────────────</span>
+  <span class="k0">SHOP-900</span> › <span class="k1">SHOP-910</span> › <span class="k2">SHOP-916</span> › <span class="kr">payments-api#437</span> Validar CVV: rechaza el cobro sin CVV válido
+      <span class="d">draft</span><span class="d"> · </span><span class="r">ci failed</span><span class="d"> · </span><span class="ga">↑1</span><span class="d"> · </span><span class="g">in progress</span><span class="d"> · </span><span class="d">stacked on #431</span><span class="d"> · </span><span class="d">today</span>
+ <span class="rule">── no PR (2) ───────────────────────────────────</span>
+  <span class="k0">SHOP-900</span> › <span class="k1">SHOP-910</span> › <span class="k2">SHOP-917</span> Tarjeta guardada: textos de error cuando la tarjeta caduca
+      <span class="c">open</span><span class="d"> · </span><span class="d">3w</span>
+  <span class="k0">SHOP-800</span> › <span class="k1">SHOP-820</span> › <span class="k2">SHOP-825</span> Bizum: la pantalla de confirmación del pago
+      <span class="g">in progress</span><span class="d"> · </span><span class="d">today</span>
+ <span class="rule">── PRs merged (1) ──────────────────────────────</span>
+  <span class="k0">SHOP-900</span> › <span class="k1">SHOP-911</span> › <span class="kr">web-app#9050</span> Resumen fijo: la columna del pedido acompaña el scroll
+      <span class="g">merged</span><span class="d"> · </span><span class="g">validating</span><span class="d"> · </span><span class="d">1w</span></pre></div>
+</div>
+<div class="legend">
+<b>Font and colors:</b> Berkeley Mono 14 and the catppuccin-mocha palette of Ghostty (ANSI 6, 7, 8, 3, 9, 10, 12), the same indexes the tool uses.
+</div>
+
+<script>
+// Demo only: click a row with an arrow to fold or unfold what hangs from it.
+document.querySelectorAll('.card pre').forEach(pre => {
+  if (pre.querySelector('.rule')) { // the phase view folds by section, not here; its titles take the same color as the tree's
+    pre.innerHTML = pre.innerHTML.split('\n').map(h => `<div class="ln">${h || ' '}</div>`).join('');
+    pre.querySelectorAll('.ln').forEach(el => { if (el.querySelector('.k0,.k1,.k2,.k3,.kr')) el.style.color = 'rgba(205, 214, 244, 0.5)'; });
+    return;
+  }
+  const parts = pre.innerHTML.split('\n');
+  pre.innerHTML = parts.map(h => `<div class="ln">${h || ' '}</div>`).join('');
+  const lines = [...pre.querySelectorAll('.ln')];
+  const gutter = (el, ch) => { // the first cell of a line: the cursor's mark
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const n = w.nextNode(); if (n && n.data.length) n.data = ch + n.data.slice(1);
+  };
+  let initial = null;
+  lines.forEach(el => {
+    const sel = el.querySelector(':scope > .sel');
+    if (!sel) return;
+    el.innerHTML = sel.innerHTML.replace(/\s+$/, '');
+    el.querySelectorAll('.sd').forEach(x => x.className = 'd');
+    gutter(el, ' ');
+    if (!initial) initial = el;
+  });
+  const rows = []; // {title, detail, col, parent, folded, arrow}
+  const stack = [];
+  const col = el => { const t = el.textContent; const m = t.match(/[^ ▌▾▸]/); return m ? m.index : 0; };
+  for (let i = 0; i < lines.length; i++) {
+    const el = lines[i], t = el.textContent;
+    const header = /^▾ \S/.test(t) && !t.startsWith('▾  ');
+    const c = header ? -1 : col(el);
+    while (stack.length && stack[stack.length - 1].col >= c) stack.pop();
+    const row = { title: el, detail: null, col: c, parent: stack[stack.length - 1] || null, folded: false };
+    const group = t.includes('PRs without a ticket');
+    if (!header && !group && i + 1 < lines.length && !/^▾ \S/.test(lines[i + 1].textContent)) { row.detail = lines[++i]; }
+    const arrow = [...el.querySelectorAll('span')].find(s => s.textContent === '▾');
+    if (arrow) { row.arrow = arrow; el.style.cursor = 'pointer'; if (row.detail) row.detail.style.cursor = 'pointer'; }
+    rows.push(row); stack.push(row);
+  }
+  // The tree guides: ├── or └── in front of a child ticket, │ down to its next sibling and from a ticket to its sub-tickets.
+  const depth = r => (r.col >= 3 && (r.col - 3) % 4 === 0) ? (r.col - 3) / 4 : -1;
+  rows.forEach(r => { r.kids = []; });
+  rows.forEach(r => { if (r.parent) r.parent.kids.push(r); });
+  rows.forEach(r => { r.last = !r.parent || r.parent.kids[r.parent.kids.length - 1] === r; });
+  const strip = (el, n) => {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); const ns = []; let x;
+    while ((x = w.nextNode())) ns.push(x);
+    for (const t of ns) { if (n <= 0) break; const k = Math.min(n, t.data.length); t.data = t.data.slice(k); n -= k; }
+  };
+  const firstCol = el => { const m = el.textContent.match(/[^ ▌▾▸]/); return m ? m.index : 0; };
+  rows.forEach(r => {
+    if (depth(r) < 0) return;
+    const pr = r.title.textContent[r.col] === '↳'; // the tree line says it hangs from the ticket: no ↳
+    if (r.arrow) r.arrow.remove();
+    r.pr = pr; r.tn = r.col; strip(r.title, r.col + (pr ? 2 : 0) - (r.arrow ? 1 : 0));
+    if (r.detail) { r.dn = firstCol(r.detail); strip(r.detail, r.dn); }
+    [r.title, r.detail].filter(Boolean).forEach(l => { const s = document.createElement('span'); s.className = 'lead'; l.prepend(s); });
+  });
+  // the ticket's line down to its sub-tickets passes by its PRs only when a sub-ticket follows
+  rows.forEach(r => { if (r.pr && r.parent) r.last = !r.parent.kids.some(k => !k.pr); });
+  const cellsOf = (r, title) => {
+    // The guide runs down from the parent's fold arrow, as Textual's tree (harlequin) draws it: a child is `├── ▼ key`,
+    // a leaf `├──── key`. A PR is a bullet of its ticket, set in the sub-tickets' arrow column.
+    // window.STEP is the cells per level, window.DET how far the details sit past the key, window.BUL the PR bullets (set at the top).
+    const S = window.STEP, D = window.DET;
+    const A = d => 1 + S * d; // a row's arrow column
+    const K = d => A(d) + 2;  // its key column
+    const d = depth(r), leaf = !r.pr && !r.arrow;
+    // a leaf's key stays in the column of its siblings' keys: its branch runs on through the arrow's place (`└──── key`)
+    const own = r.pr ? K(depth(r.parent)) + window.BUL : K(d); // where the row's first line starts: its bullet or its key
+    const cells = Array(r.pr ? own + 2 : own + (title ? 0 : D)).fill(' ');
+    if (r.pr && title) cells[own] = window.BULLET;
+    for (let a = r; a && depth(a) >= 1; a = a.parent) {
+      const at = A(depth(a) - 1); // the parent's arrow column
+      if (a === r && title && !r.pr) { cells[at] = r.last ? '└' : '├'; for (let i = at + 1; i < (leaf ? A(d) + 1 : A(d) - 1); i++) cells[i] = '─'; }
+      else if (!a.last) cells[at] = '│';
+    }
+    if (!title && !r.pr && r.kids.some(k => !k.pr) && !r.folded) cells[A(d)] = '│'; // down from its own arrow
+    return cells;
+  };
+
+
+  const drawLead = (r, l, title) => {
+    const lead = l.querySelector(':scope > .lead'); if (!lead) return;
+    const cells = cellsOf(r, title);
+    cells[0] = l.classList.contains('cur') ? '▌' : ' ';
+    lead.textContent = '';
+    let run = '', tc = false;
+    const flush = () => { if (!run) return; if (tc) { for (const ch of run) { const s = document.createElement('span'); const bk = ({'│':'v','├':'t','└':'l','─':'h','╌':'hd'})[ch]; s.className = bk ? 'tc bx ' + bk : 'tc'; s.textContent = ch; lead.append(s); } } else lead.append(run); run = ''; };
+    cells.forEach((ch, i) => {
+      if (title && r.arrow && i === 1 + window.STEP * depth(r)) { flush(); lead.append(r.arrow); return; }
+      const isTc = '│├└─╌'.includes(ch) || BULLETS.includes(ch);
+      if (i === 0 || isTc !== tc) { flush(); tc = isTc && i > 0; }
+      run += ch;
+      if (i === 0) flush();
+    });
+    flush();
+  };
+  const drawLeads = () => rows.forEach(r => { if (depth(r) < 0) return; drawLead(r, r.title, true); if (r.detail) drawLead(r, r.detail, false); });
+  drawLeads();
+  const hidden = r => { for (let p = r.parent; p; p = p.parent) if (p.folded) return true; return false; };
+  const paint = () => rows.forEach(r => {
+    const h = hidden(r);
+    r.title.style.display = h ? 'none' : '';
+    if (r.detail) r.detail.style.display = h ? 'none' : '';
+    if (r.arrow) r.arrow.textContent = r.folded ? window.ARROW[1] : window.ARROW[0];
+ 
+  }) || drawLeads();
+  (window.REPAINT = window.REPAINT || []).push(paint); paint();
+  // One listener on the block, for the mouse and for touch: iOS Safari does
+  // not always send a click to a plain div, so a tap is handled on touchend
+  // (and the click it would send after it is ignored).
+  const byLine = new Map();
+  rows.forEach(r => { byLine.set(r.title, r); if (r.detail) byLine.set(r.detail, r); });
+  let cur = null;
+  const select = r => { // one cursor, which stays where it was put
+    if (cur) [cur.title, cur.detail].filter(Boolean).forEach(l => { l.classList.remove('cur'); gutter(l, ' '); });
+    cur = r;
+    [r.title, r.detail].filter(Boolean).forEach(l => { l.classList.add('cur'); gutter(l, '▌'); });
+  };
+  if (initial && byLine.get(initial)) select(byLine.get(initial));
+  // the title takes the color of the row's own key, faint; the keys stay full
+  lines.forEach(el => {
+    const ks = el.querySelectorAll('.k0,.k1,.k2,.k3,.kr');
+    if (ks.length) el.style.color = 'rgba(205, 214, 244, 0.5)'; // faint, as the terminal draws SGR 2
+  });
+  const flipAt = target => {
+    const ln = target.closest('.ln'); const r = ln && byLine.get(ln);
+    if (!r) return false;
+    select(r);
+    if (r.arrow) { r.folded = !r.folded; paint(); }
+    return true;
+  };
+  // Demo of shift+tab / tab: show the tree down to a level (1: the roots alone, all: everything).
+  const bar = document.createElement('div'); bar.className = 'levels';
+  bar.append('shift+tab / tab → ');
+  const setLevel = n => {
+    rows.forEach(r => { if (r.arrow) r.folded = n !== 0 && depth(r) >= n - 1; });
+    paint();
+    bar.querySelectorAll('button').forEach(b => b.classList.toggle('on', +b.dataset.n === n));
+  };
+  [[1, 'level 1'], [2, 'level 2'], [3, 'level 3'], [0, 'all']].forEach(([n, label]) => {
+    const b = document.createElement('button'); b.textContent = label; b.dataset.n = n;
+    b.addEventListener('click', () => setLevel(n)); bar.append(b);
+  });
+  bar.querySelector('[data-n="0"]').classList.add('on');
+  pre.before(bar);
+  let moved = false, lastTouch = 0;
+  pre.addEventListener('touchstart', () => { moved = false; }, { passive: true });
+  pre.addEventListener('touchmove', () => { moved = true; }, { passive: true });
+  pre.addEventListener('touchend', e => {
+    if (moved) return; // a scroll, not a tap
+    if (flipAt(e.target)) { lastTouch = Date.now(); e.preventDefault(); }
+  });
+  pre.addEventListener('click', e => { if (Date.now() - lastTouch > 600) flipAt(e.target); });
+  pre.style.cursor = 'pointer';
+});
+</script>
+
+</body></html>

@@ -1,0 +1,2 @@
+# Berkeley Mono is licensed: drop the .otf files here to preview with it, never commit them.
+*.otf

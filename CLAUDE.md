@@ -33,9 +33,12 @@ Files are split by concern but everything stays in `package main`:
   open, `runDump` (it writes to an `io.Writer`, so the tests read what
   `-dump` prints: the list as the popup draws it, every ticket and PR, in
   plain text, with the local counters read synchronously), `summarizeAll`.
-- `config.go`: front-matter extraction from `asdev.local.md`, stack parsing
-  (config order preserved via a `yaml.Node` walk), which trackers a stack
-  lists (`issues:`), netrc + env credentials for Jira.
+- `asdevconfig.go`: reading `asdev.local.md`: front-matter extraction,
+  every stack in config order (a `yaml.Node` walk), netrc + env credentials
+  for Jira (`resolveCredential`). The same file in every tool of the family
+  that reads the asdev config (asmeta too).
+- `config.go`: which trackers a stack lists (`issues:`, `parseStacks`,
+  `issueStacks`); `ASGOTOISSUES_CONFIG` names another config file.
 - `provider.go`: the tracker-neutral side: the `issue` struct (with its
   parent's key, summary and URL, and `Ghost` for one fetched as context), the
   `provider` interface (`kind`, `fetch` returning `fetched`: issues or PRs),

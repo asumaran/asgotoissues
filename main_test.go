@@ -161,22 +161,6 @@ func TestMergeStacksFallsBackPerSource(t *testing.T) {
 	}
 }
 
-func TestNetrcFind(t *testing.T) {
-	oneLine := strings.Fields("machine a.atlassian.net login me@a password tok-a machine b.atlassian.net login me@b password tok-b")
-	c, ok := netrcFind(oneLine, "b.atlassian.net")
-	if !ok || c.user != "me@b" || c.secret != "tok-b" {
-		t.Errorf("one-line lookup = %+v %v", c, ok)
-	}
-	multi := strings.Fields("machine a.atlassian.net\n  login me@a\n  password tok-a\ndefault\n  login x\n  password y")
-	c, ok = netrcFind(multi, "a.atlassian.net")
-	if !ok || c.user != "me@a" || c.secret != "tok-a" {
-		t.Errorf("multi-line lookup = %+v %v", c, ok)
-	}
-	if _, ok := netrcFind(multi, "missing.example"); ok {
-		t.Errorf("missing host should not resolve")
-	}
-}
-
 func TestParseJiraTime(t *testing.T) {
 	got, err := parseJiraTime("2026-08-17T11:40:18.035-0400")
 	if err != nil {

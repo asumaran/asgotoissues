@@ -62,6 +62,13 @@ Files are split by concern but everything stays in `package main`:
   `attention` is the worst of them. `pullRefs` (the tickets and issues a PR
   names: strong in the branch, the title and the closing references, weak
   in the body).
+- `prshare.go`: the shared PR cache (`prs.json` in asmeta's state dir, asmeta
+  its only writer; format in asgoto's `docs/DESIGN.md`, "Shared PR cache").
+  The same file in every tool of the family that shows PRs. Here it is read
+  only through `overlaySharedPRs` (`pull.go`): in `setEntries`, a PR the
+  shared cache saw in a later version (`updated_at`), matched by URL, takes
+  its state, draft flag and title; display only, `issuecache.json` keeps what
+  the own fetch said.
 - `pulls.go`: the pulls source: three searches per stack under its owners
   (open PRs I am involved in, my PRs merged in the last 30 days, and the
   URLs of the PRs whose review is asked of me), the viewer's login for

@@ -423,11 +423,12 @@ func (m *model) resizeList(grow bool) tea.Cmd {
 }
 
 // setEntries takes a list and its PRs: the old snapshot's parents get their
-// URLs, the PRs hang from their tickets, and the corpora follow.
+// URLs, the PRs take the newer facts of the shared PR cache, hang from their
+// tickets, and the corpora follow.
 func (m *model) setEntries(issues []issue, pulls []pull) {
 	backfillParentURLs(issues, m.stacks)
 	m.entries = buildEntries(issues)
-	m.pulls = pulls
+	m.pulls = overlaySharedPRs(pulls, loadSharedPRs())
 	m.unlinked = linkPulls(m.entries, m.pulls)
 	m.summaries, m.keysC, m.metas = corpora(m.entries, m.titleOf)
 }

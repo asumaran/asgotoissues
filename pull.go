@@ -270,3 +270,32 @@ func issueRef(repo, ref string) string {
 	}
 	return strings.ToLower(ref)
 }
+
+// ---- the shared PR cache ----
+
+// overlaySharedPRs returns pulls with the facts of the shared PR cache
+// (prshare.go, written by asmeta) applied where the cache saw a later version
+// of the same PR, by URL, never by branch: its state, draft flag and title.
+// It is a display layer: the slice it gets, which is what the cache file
+// keeps, is not touched, and the next fetch of a newer version wins.
+func overlaySharedPRs(pulls []pull, shared sharedPRs) []pull {
+	out := make([]pull, len(pulls))
+	for i, p := range pulls {
+		if sp, ok := shared.pull(p.URL); ok && sp.newerThan(p.Updated) {
+			switch sp.State {
+			case "merged":
+				p.State, p.Draft = prMerged, false
+			case "closed":
+				p.State, p.Draft = prClosed, false
+			default:
+				p.State, p.Draft = prOpen, sp.State == "draft"
+			}
+			if sp.Title != "" {
+				p.Title = sp.Title
+			}
+			p.Updated = sp.UpdatedAt
+		}
+		out[i] = p
+	}
+	return out
+}

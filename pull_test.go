@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestPullRefs: the branch and the title link strongly, as do the closing
@@ -84,5 +85,30 @@ func TestPullFlags(t *testing.T) {
 		if text(all) != tc.want || tc.p.attention(tc.base) != tc.level {
 			t.Errorf("%s: %q (level %d), want %q (level %d)", name, text(all), tc.p.attention(tc.base), tc.want, tc.level)
 		}
+	}
+}
+
+func TestOverlaySharedPRs(t *testing.T) {
+	t0 := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	shared := emptySharedPRs()
+	shared.Pulls["https://github.com/o/r/pull/20"] = sharedPR{Number: 20, State: "merged", Title: "merged now", UpdatedAt: t0.Add(time.Hour)}
+	shared.Pulls["https://github.com/o/r/pull/30"] = sharedPR{Number: 30, State: "draft", Title: "older", UpdatedAt: t0.Add(-time.Hour)}
+	pulls := []pull{
+		{URL: "https://github.com/o/r/pull/10", Number: 10, State: prMerged, Head: "feature", Updated: t0},
+		{URL: "https://github.com/o/r/pull/20", Number: 20, State: prOpen, Draft: true, Head: "feature", Title: "open", Updated: t0},
+		{URL: "https://github.com/o/r/pull/30", Number: 30, State: prOpen, Title: "mine is newer", Updated: t0},
+	}
+	got := overlaySharedPRs(pulls, shared)
+	if got[0].State != prMerged || got[0].Number != 10 {
+		t.Errorf("a PR the cache does not know is untouched, even on the same branch: %+v", got[0])
+	}
+	if got[1].State != prMerged || got[1].Draft || got[1].Title != "merged now" {
+		t.Errorf("a newer shared version wins: %+v", got[1])
+	}
+	if got[2].Draft || got[2].Title != "mine is newer" {
+		t.Errorf("an older shared version loses: %+v", got[2])
+	}
+	if pulls[1].State != prOpen || !pulls[1].Draft {
+		t.Error("the overlay is a display layer: the cached slice is not touched")
 	}
 }

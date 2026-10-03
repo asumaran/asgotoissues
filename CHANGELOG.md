@@ -1,3 +1,13 @@
+## v0.13.0 (2026-10-03)
+
+* feat(prs): take newer pull request facts from the shared cache (481f838)
+* refactor(config): read the asdev config through the shared asdevconfig.go (05a9c1c)
+* feat(ui): add a rows layout and keep folds between runs (28425e9)
+* feat(ui): redesign the list around what each row says (a488d8f)
+* feat: list issues as a tree with their pull requests (4cd1668)
+* docs(preview): list only childless tickets under no PR (2de26d6)
+* docs: add the tree layout preview (7f67a97)
+
 ## v0.12.1 (2026-09-24)
 
 * refactor(ui): take the shared frame without the context line (45eb379)

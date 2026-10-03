@@ -134,15 +134,16 @@ branches of the linked PRs (`8122` finds the ticket of `front#8122`).
 | `ctrl+s` | cycle the order: `created`, `updated`, `key`, `attention` (remembered) |
 | `ctrl+t` | cycle what is listed: `working`, `pending`, `all` (remembered) |
 | `ctrl+g` | group as a tree or by phase (remembered) |
-| `space` (empty filter) | fold or unfold the row: a ticket, a stack, the PRs without a ticket, a phase (on a PR, its ticket) |
-| `shift+tab` / `tab` | fold the whole tree one level shallower / deeper: all, then down to the roots alone, and back |
+| `ctrl+l` | switch the layout: preview beside the list (columns) or under it (rows); remembered |
+| `space` (empty filter) | fold or unfold the row: a ticket, a stack, the PRs without a ticket, a phase (on a PR, its ticket); remembered between runs |
+| `shift+tab` / `tab` | fold the whole tree one level shallower / deeper: all, then down to the roots alone, and back; remembered too |
 | `↑/↓`, `ctrl+p`/`ctrl+n` | move the cursor |
 | PgDn/PgUp | move the cursor a page |
 | `alt+↑`/`alt+↓`, Home/End | top or bottom of the list |
-| `shift+↓`/`shift+↑`, mouse wheel over the preview | scroll the description |
+| mouse wheel over the preview | scroll the description |
 | mouse wheel over the list | move the cursor |
-| `f1` | open the panel with the options (`Order`; `PRs`: all, open, attention; `Show`; `Group`; `Rows`: two lines, one line; `Titles`: short, original) and every key (`esc` closes it) |
-| `shift+←`/`shift+→` | resize the list; the split is remembered (the list takes a quarter of the width by default) |
+| `f1` | open the panel with the options (`Order`; `PRs`: all, open, attention; `Show`; `Group`; `Rows`: two lines, one line; `Titles`: short, original; `Layout`: columns, rows) and every key (`esc` closes it) |
+| `shift+←`/`shift+→` (columns), `shift+↑`/`shift+↓` (rows) | resize the list of the current layout; each layout's split is remembered on its own (the list takes a quarter of the width by default in columns, half the body in rows) |
 | click | select a row, on either of its lines (`enter` still opens it) |
 | `esc`, `ctrl+c`, `q` with an empty filter | quit |
 
@@ -230,8 +231,9 @@ scripts/pty-check.py ./asgotoissues   # end-to-end TUI check on a pty (python3 +
 herdr plugin link "$PWD"   # register the working copy (no build step)
 ```
 
-Runtime state (`issuecache.json`, `summaries.json`, the divider's
-`split-columns`, the options) lives in
+Runtime state (`issuecache.json`, `summaries.json`, the dividers
+(`split-columns`, `split-rows`), the folded rows and the `tab`/`shift+tab`
+level (`folds.json`), the options) lives in
 `HERDR_PLUGIN_STATE_DIR`; standalone runs use the same directory
 (`~/.local/state/herdr/plugins/asumaran.asgotoissues/`).
 

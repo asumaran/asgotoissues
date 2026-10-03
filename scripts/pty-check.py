@@ -384,4 +384,48 @@ check(divider(f) == grown, "the next run opens with the same split: %d" % divide
 s.send(SHIFT_LEFT, 0.6)
 os.write(s.master, ESC); s.pump(0.4); s.finish()
 
+# ---------- run 5: ctrl+l toggles the layout; a fold survives a restart ----------
+CTRL_L = b"\x0c"
+def rows_list(f):
+    # The rows layout's divider: a horizontal "├...┤" line carrying the
+    # counter (n/m), with none of the columns layout's "┬"/"┴" marks. The
+    # list is everything between the frame's own top edge and it.
+    for i, l in enumerate(f):
+        if l.startswith("├") and "┤" in l and "┬" not in l and "┴" not in l and re.search(r"\d+/\d+", l):
+            return [l[1:-1].rstrip() for l in f[3:i]]
+    return []
+
+s = session()
+f = s.start("asgotoissues ❯")
+f = s.send(CTRL_L, 0.6); dump("rows layout", f)
+check(not any("┬" in l or "┴" in l for l in f) and all(len(l) == COLS for l in f),
+      "ctrl+l switches to the rows layout: a horizontal divider, no vertical one, still COLS cells wide")
+rows = rows_list(f)
+check(any(r == "▼ acme" for r in rows) and any("plat-2099" in r for r in rows) and any("front#41" in r for r in rows),
+      "the list still shows the tree, now full width: %r" % rows)
+SHIFT_DOWN, SHIFT_UP = b"\x1b[1;2B", b"\x1b[1;2A"
+at = len(rows)
+f = s.send(SHIFT_DOWN, 0.6)
+grown = len(rows_list(f))
+check(grown > at and all(len(l) == COLS for l in f), "rows: shift+down grows the list: %d -> %d" % (at, grown))
+f = s.send(SHIFT_RIGHT, 0.6)
+check(len(rows_list(f)) == grown and not any("┬" in l for l in f), "rows: shift+right leaves the divider alone")
+f = s.send(SHIFT_UP, 0.6)
+check(len(rows_list(f)) == at, "rows: shift+up shrinks it back: %d" % len(rows_list(f)))
+f = s.send(b" ", 0.6); dump("folded ticket (rows)", f)  # space folds the ticket under the cursor (PLAT-2099)
+rows = rows_list(f)
+check(any(r.startswith("▌▶") and "plat-2099" in r for r in rows) and not any("front#41" in r for r in rows),
+      "space folds the ticket under the cursor in the rows layout too: %r" % rows)
+os.write(s.master, ESC); s.pump(0.4); s.finish()
+
+s = session()
+f = s.start("asgotoissues ❯"); dump("restarted", f)
+check(not any("┬" in l or "┴" in l for l in f), "the layout is remembered across a restart: %r" % f)
+rows = rows_list(f)
+check(any(r.startswith("▌▶") and "plat-2099" in r for r in rows) and not any("front#41" in r for r in rows),
+      "the folded ticket is still folded after the restart: %r" % rows)
+s.send(b" ", 0.4)   # unfold plat-2099 again
+s.send(CTRL_L, 0.4)  # back to columns, for anything appended after this
+os.write(s.master, ESC); s.pump(0.4); s.finish()
+
 done()

@@ -467,6 +467,7 @@ func TestRunDumpTree(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	t.Setenv("ASGOTOISSUES_CONFIG", filepath.Join(t.TempDir(), "asdev.local.md"))
 	saveSetting(stateDir(), "order", "key")
+	saveFolds(stateDir(), map[string]bool{"stack:work": true}, 1) // the popup's folds never hide a ticket from the dump
 	stacks := []stack{{Name: "work", Trackers: []string{kindJira}, Orgs: []string{"me"}, BaseURL: "https://w"}, {Name: "home", Trackers: []string{kindGitHub}, Orgs: []string{"me"}}}
 	cache := issueCache{FetchedAt: time.Now(), Issues: treeIssues(), Pulls: treePulls()}
 	var out bytes.Buffer

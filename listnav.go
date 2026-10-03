@@ -4,9 +4,8 @@ package main
 // family: a row, a page, the ends. home/end would otherwise move the caret of
 // the filter input, which left/right and ctrl+e already do; the list needs
 // them more. Laptop keyboards have no home/end (fn+arrows sends them, when
-// the terminal lets it through), so the ends are also on alt+arrows. The
-// preview scrolls with shift+arrows, never with pgup/pgdn: those page the
-// list.
+// the terminal lets it through), so the ends are also on alt+arrows.
+// pgup/pgdn page the list, never the preview.
 //
 // This file is the same in every tool of the family.
 

@@ -59,3 +59,29 @@ func splitMain(list, preview []string, listW, prevW int, counter, pos string) []
 	}
 	return append(out, hline(listW+1, "├", "", "", counter)+hline(prevW+2, "┴", "┤", "", pos))
 }
+
+// stackMain is the main section with a list of w-2 cells over a preview of
+// the same width, split by a horizontal divider: the top edge, the list
+// rows, the divider carrying the counter, exactly prevH preview rows (a
+// cell of padding on each side, short preview content padded and long
+// content cut, the same way a header taller than its budget is cut in the
+// columns layout) and the bottom edge carrying the scroll position. Used in
+// the rows layout; splitMain is columns' side-by-side drawing. list must
+// hold lines of exactly w-2 cells; preview lines are padded here.
+func stackMain(list, preview []string, w, prevH int, counter, pos string) []string {
+	side := stDim.Render("│")
+	out := make([]string, 0, len(list)+prevH+3)
+	out = append(out, hline(w, "├", "┤", "", ""))
+	for _, l := range list {
+		out = append(out, side+l+side)
+	}
+	out = append(out, hline(w, "├", "┤", "", counter))
+	for i := 0; i < prevH; i++ {
+		d := ""
+		if i < len(preview) {
+			d = preview[i]
+		}
+		out = append(out, side+fit(" "+d, w-2)+side)
+	}
+	return append(out, hline(w, "├", "┤", "", pos))
+}

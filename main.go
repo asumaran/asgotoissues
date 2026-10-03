@@ -147,6 +147,7 @@ func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, s
 	backfillParentURLs(cache.Issues, stacks)
 	m := newModel(stacks, cache, false)
 	m.order, m.show, m.group, m.rowsM, m.prs = parseOrder(order), showAll, groupTree, rowsTwo, prsAll
+	m.collapsed, m.depthNow = map[string]bool{}, 0 // every ticket and PR: the popup's saved folds are not the dump's
 	if summarizeNow {
 		n, err := summarizeAll(&m)
 		fmt.Fprintf(w, "short titles: %d written\n", n)

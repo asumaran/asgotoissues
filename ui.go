@@ -101,22 +101,21 @@ var (
 // ---- key bindings ----
 
 type keyMap struct {
-	Nav      listNav
-	Select   key.Binding
-	Quit     key.Binding
-	PrevUp   key.Binding
-	PrevDown key.Binding
-	Shrink   key.Binding
-	Grow     key.Binding
-	Copy     key.Binding
-	Order    key.Binding
-	Show     key.Binding
-	Group    key.Binding
-	Fold     key.Binding
-	Shallow  key.Binding // shift+tab: the tree one level less deep
-	Deeper   key.Binding // tab: one level more
-	Filter   key.Binding
-	Help     key.Binding
+	Nav     listNav
+	Select  key.Binding
+	Quit    key.Binding
+	Shrink  key.Binding
+	Grow    key.Binding
+	Copy    key.Binding
+	Order   key.Binding
+	Show    key.Binding
+	Group   key.Binding
+	Layout  key.Binding
+	Fold    key.Binding
+	Shallow key.Binding // shift+tab: the tree one level less deep
+	Deeper  key.Binding // tab: one level more
+	Filter  key.Binding
+	Help    key.Binding
 }
 
 // ShortHelp is the help line: the tool's own actions, the panel's key and the
@@ -131,9 +130,9 @@ func (k keyMap) ShortHelp() []key.Binding {
 // filter and the preview, the list, the tool's actions, help and quit.
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Filter, k.PrevUp, k.Shrink},
+		{k.Filter, k.Shrink},
 		{k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
-		{k.Select, k.Copy, k.Order, k.Show, k.Group},
+		{k.Select, k.Copy, k.Order, k.Show, k.Group, k.Layout},
 		{k.Fold, k.Shallow},
 		{k.Help, k.Quit},
 	}
@@ -141,17 +140,18 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 func defaultKeys() keyMap {
 	return keyMap{
-		Nav:      defaultListNav(),
-		Select:   key.NewBinding(key.WithKeys("enter", "ctrl+o"), key.WithHelp("enter", "open in browser")),
-		Quit:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc/q", "quit")),
-		PrevUp:   key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑/⇧↓", "scroll the description")),
-		PrevDown: key.NewBinding(key.WithKeys("shift+down")),
-		Shrink:   key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←/⇧→", "resize the list")),
-		Grow:     key.NewBinding(key.WithKeys("shift+right")),
-		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the key")),
-		Order:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "order")),
-		Show:     key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "show")),
-		Group:    key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "group")),
+		Nav:    defaultListNav(),
+		Select: key.NewBinding(key.WithKeys("enter", "ctrl+o"), key.WithHelp("enter", "open in browser")),
+		Quit:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc/q", "quit")),
+		// The divider moves along its own axis: ⇧←/⇧→ side by side, ⇧↑/⇧↓
+		// with the preview under the list (resizeKey).
+		Shrink: key.NewBinding(key.WithKeys("shift+left", "shift+up"), key.WithHelp("⇧←/⇧→ ⇧↑/⇧↓", "resize the list")),
+		Grow:   key.NewBinding(key.WithKeys("shift+right", "shift+down")),
+		Copy:   key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the key")),
+		Order:  key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "order")),
+		Show:   key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "show")),
+		Group:  key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "group")),
+		Layout: key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("^l", "layout")),
 		// space folds only while the filter is empty; otherwise it is text.
 		Fold:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "fold/unfold (empty filter)")),
 		Shallow: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab/tab", "fold/unfold a level")),
@@ -204,22 +204,24 @@ type model struct {
 	stale      bool // the last refresh failed: the list is the cached one (see status)
 
 	// ui
-	rows    []row
-	cursor  int
-	lineOf  []int // the first list line of each row: a row takes one line, or two with its details
-	lines   int   // how many lines the rows take
-	ti      textinput.Model
-	listVP  viewport.Model
-	prevVP  viewport.Model
-	help    help.Model
-	keys    keyMap
-	width   int
-	height  int
-	split   int // the preview's share of the width, percent
-	renders map[string]string
-	prevKey string
-	flash   flash // confirmation on the help line (flash.go)
-	panel   panel // options and keys, over the frame while it is open (panel.go)
+	rows         []row
+	cursor       int
+	lineOf       []int // the first list line of each row: a row takes one line, or two with its details
+	lines        int   // how many lines the rows take
+	ti           textinput.Model
+	listVP       viewport.Model
+	prevVP       viewport.Model
+	help         help.Model
+	keys         keyMap
+	width        int
+	height       int
+	layout       layoutMode // side by side, or the preview under the list (ctrl+l, panel)
+	splitColumns int        // the preview's share of the width in the columns layout, percent
+	splitRows    int        // the preview's share of the body in the rows layout, percent
+	renders      map[string]string
+	prevKey      string
+	flash        flash // confirmation on the help line (flash.go)
+	panel        panel // options and keys, over the frame while it is open (panel.go)
 
 	// previewStyle is the glamour standard style ("dark"/"light"). It starts
 	// as "dark" and flips when the terminal answers RequestBackgroundColor.
@@ -231,6 +233,7 @@ type model struct {
 // newModel builds the model from the cached snapshot. stale starts the
 // background refresh of every source from Init.
 func newModel(stacks []stack, cache issueCache, stale bool) model {
+	collapsed, depthNow := loadFolds(stateDir())
 	m := model{
 		stacks:       stacks,
 		sources:      sourcesOf(stacks),
@@ -243,7 +246,9 @@ func newModel(stacks []stack, cache issueCache, stale bool) model {
 		group:        parseGroup(loadSetting(stateDir(), "group")),
 		rowsM:        parseRows(loadSetting(stateDir(), "rows")),
 		titles:       parseTitles(loadSetting(stateDir(), "titles")),
-		collapsed:    map[string]bool{},
+		layout:       parseLayout(loadSetting(stateDir(), "layout")),
+		collapsed:    collapsed,
+		depthNow:     depthNow,
 		summ:         loadSummaries(),
 		summTried:    map[string]bool{},
 		local:        map[string]localState{},
@@ -252,7 +257,8 @@ func newModel(stacks []stack, cache issueCache, stale bool) model {
 		prevVP:       viewport.New(viewport.WithWidth(40), viewport.WithHeight(17)),
 		help:         help.New(),
 		keys:         defaultKeys(),
-		split:        loadSplit(stateDir()),
+		splitColumns: loadSplit(stateDir(), splitColumnsFile, splitColumnsDefault),
+		splitRows:    loadSplit(stateDir(), splitRowsFile, splitRowsDefault),
 		renders:      map[string]string{},
 		previewStyle: "dark",
 		width:        94,
@@ -305,22 +311,75 @@ func (m *model) opts() treeOpts {
 // innerW is the width inside the frame's sides.
 func (m *model) innerW() int { return max(20, m.width-2) }
 
-// listW is the list's share of the main section; the divider and the preview
-// take the rest.
-func (m *model) listW() int { w, _ := splitWidths(m.innerW(), m.split); return w }
+// minColumnsW is the narrowest terminal the side-by-side layout is used on,
+// as asgitlog's: below it the list share would not even fit a key and its
+// title.
+const minColumnsW = 60
+
+// columns reports the effective layout: rows is used when the setting asks
+// for it, or the terminal is narrower than minColumnsW (the same narrow
+// fallback as asgitlog), but only when the body is tall enough for the
+// extra divider row plus a two-line list and a two-line preview
+// (bodyH >= 5); short of that the frame falls back to columns, its original
+// floor, so a short popup keeps working the way it always has. The saved
+// setting is never touched by any of this.
+func (m *model) columns() bool {
+	rows := (m.layout == layoutRows || m.width < minColumnsW) && m.bodyH() >= 5
+	return !rows
+}
+
+// listW is the list's share of the main section: the columns layout's share
+// of the width (the divider and the preview take the rest), or the whole
+// width in the rows layout.
+func (m *model) listW() int {
+	if m.columns() {
+		w, _ := splitWidths(m.innerW(), m.splitColumns)
+		return w
+	}
+	return m.innerW()
+}
 
 // detailsW is the preview's area, including the cell of padding on each
 // side; prevW is the text width inside it.
-func (m *model) detailsW() int { _, w := splitWidths(m.innerW(), m.split); return w }
-func (m *model) prevW() int    { return max(10, m.detailsW()-2) }
+func (m *model) detailsW() int {
+	if m.columns() {
+		_, w := splitWidths(m.innerW(), m.splitColumns)
+		return w
+	}
+	return m.innerW()
+}
+func (m *model) prevW() int { return max(10, m.detailsW()-2) }
 
 // bodyH is the height of the main section: everything but the frame's own
-// lines and the help.
+// lines and the help. listH and detailsH split it between the list and the
+// preview: the same height in the columns layout (side by side), or, in the
+// rows layout, the list's and the preview's own shares with a line lost to
+// the divider between them.
 func (m *model) bodyH() int { return max(1, m.height-frameRows-1) }
+
+func (m *model) listH() int {
+	if m.columns() {
+		return m.bodyH()
+	}
+	return max(1, m.bodyH()-1-m.detailsH())
+}
+
+// detailsH is the preview's vertical budget: its header, the blank line
+// under it and its scrollable body together (syncPreviewHeight splits it).
+// In the rows layout it is splitRows' share of the body, clamped to a floor
+// of 8 lines (or less on a short body) and a ceiling that leaves the list at
+// least 2 lines plus the divider.
+func (m *model) detailsH() int {
+	if m.columns() {
+		return m.bodyH()
+	}
+	lo := min(8, m.bodyH()-3)
+	return max(lo, min(m.bodyH()*m.splitRows/100, m.bodyH()-3))
+}
 
 func (m *model) resize() {
 	m.listVP.SetWidth(m.listW())
-	m.listVP.SetHeight(m.bodyH())
+	m.listVP.SetHeight(m.listH())
 	m.prevVP.SetWidth(m.prevW())
 	m.syncPreviewHeight()
 	m.help.SetWidth(max(0, m.width-4))
@@ -329,18 +388,35 @@ func (m *model) resize() {
 
 // syncPreviewHeight fits the body viewport under the header of the selected
 // row: a PR's facts take more lines than a ticket's, and the frame shows
-// only bodyH lines.
+// only detailsH lines of the preview in all.
 func (m *model) syncPreviewHeight() {
 	hh := 0
 	if r := m.currentRow(); r != nil {
 		hh = lipgloss.Height(m.headerOf(r, m.prevW())) + 1 // and the blank line under it
 	}
-	m.prevVP.SetHeight(max(1, m.bodyH()-hh))
+	m.prevVP.SetHeight(max(1, m.detailsH()-hh))
 }
 
-// resizeList moves the divider between the list and the preview by one step.
+// resizeKey moves the divider with the arrows of its own axis: ⇧←/⇧→ in the
+// columns layout, ⇧↑/⇧↓ in the rows layout (up and left shrink the list).
+// The other pair does nothing: the preview scrolls with the wheel only.
+func (m *model) resizeKey(msg tea.KeyPressMsg) tea.Cmd {
+	vertical := msg.Code == tea.KeyUp || msg.Code == tea.KeyDown
+	if vertical == m.columns() {
+		return nil
+	}
+	return m.resizeList(key.Matches(msg, m.keys.Grow))
+}
+
+// resizeList moves the divider of the effective layout one step: the
+// columns layout's split-columns, or the rows layout's own split-rows, each
+// remembered on its own so switching layouts never disturbs the other's.
 func (m *model) resizeList(grow bool) tea.Cmd {
-	m.split = moveSplit(stateDir(), m.split, grow)
+	split, file := &m.splitColumns, splitColumnsFile
+	if !m.columns() {
+		split, file = &m.splitRows, splitRowsFile
+	}
+	*split = moveSplit(stateDir(), file, *split, grow)
 	m.resize()
 	m.renderList()
 	return m.updatePreview()
@@ -415,6 +491,7 @@ func (m *model) fold() tea.Cmd {
 	} else {
 		m.collapsed[key] = true
 	}
+	saveFolds(stateDir(), m.collapsed, m.depthNow)
 	m.applyFilter()
 	m.keepCursorOn(id)
 	m.renderList()
@@ -434,7 +511,7 @@ func (m *model) foldTo(shallower bool) tea.Cmd {
 	if deep == 0 {
 		return m.flash.fail("nothing to fold")
 	}
-	lvl := m.depthNow
+	lvl := min(m.depthNow, deep) // a saved level deeper than the tree now is clamped
 	switch {
 	case shallower && lvl == 0:
 		lvl = deep
@@ -455,6 +532,7 @@ func (m *model) foldTo(shallower bool) tea.Cmd {
 		}
 	}
 	m.collapsed = folds
+	saveFolds(stateDir(), m.collapsed, m.depthNow)
 	m.applyFilter()
 	m.keepCursorOn(cur)
 	m.renderList()
@@ -491,6 +569,23 @@ func parseRows(s string) rowsMode {
 		return rowsOne
 	}
 	return rowsTwo
+}
+
+// layoutMode is where the preview sits: beside the list, or under it.
+type layoutMode string
+
+const (
+	layoutColumns layoutMode = "columns" // preview on the side, the default
+	layoutRows    layoutMode = "rows"    // preview below, a wide list
+)
+
+var layoutModes = []layoutMode{layoutColumns, layoutRows}
+
+func parseLayout(s string) layoutMode {
+	if strings.TrimSpace(strings.ToLower(s)) == string(layoutRows) {
+		return layoutRows
+	}
+	return layoutColumns
 }
 
 // options are the settings the panel offers: the order of every level of
@@ -536,7 +631,14 @@ func (m *model) options() []option {
 			titles.cur = i
 		}
 	}
-	return []option{order, prs, show, group, rows, titles}
+	layout := option{id: "layout", label: "Layout", key: "^l"}
+	for i, v := range layoutModes {
+		layout.values = append(layout.values, string(v))
+		if v == m.layout {
+			layout.cur = i
+		}
+	}
+	return []option{order, prs, show, group, rows, titles, layout}
 }
 
 // setOption changes a setting, remembers it and rebuilds the list around the
@@ -564,6 +666,10 @@ func (m *model) setOption(id string, v int) tea.Cmd {
 		saveSetting(stateDir(), "titles", string(m.titles))
 		m.summaries, m.keysC, m.metas = corpora(m.entries, m.titleOf)
 		more = m.summarizeNext()
+	case "layout":
+		m.layout = layoutModes[max(0, min(v, len(layoutModes)-1))]
+		saveSetting(stateDir(), "layout", string(m.layout))
+		m.resize() // the viewports must not keep the old layout's sizes
 	default:
 		return nil
 	}
@@ -587,6 +693,8 @@ func (m *model) optionValue(id string) string {
 		return string(m.rowsM) + " line(s)"
 	case "titles":
 		return string(m.titles)
+	case "layout":
+		return string(m.layout)
 	}
 	return string(m.order)
 }
@@ -1015,7 +1123,8 @@ func (m *model) finishRefresh() tea.Cmd {
 	merged := mergeStacks(m.stacks, m.fresh, m.cache.Issues)
 	pulls := mergePulls(m.stacks, m.freshPulls, m.cache.Pulls)
 	fetchedAt := m.cache.FetchedAt
-	if len(m.fetchErrs) == 0 {
+	complete := len(m.fetchErrs) == 0
+	if complete {
 		fetchedAt = time.Now()
 	} else {
 		m.netErr = strings.Join(m.fetchErrs, " · ")
@@ -1029,6 +1138,11 @@ func (m *model) finishRefresh() tea.Cmd {
 
 	cur := m.currentID()
 	m.setEntries(merged, pulls)
+	if complete {
+		// A partial refresh is never trusted to prune: a source that failed
+		// must not cost its tickets their folds.
+		m.pruneFolds()
+	}
 	m.applyFilter()
 	m.keepCursorOn(cur)
 	m.renderList()
@@ -1200,6 +1314,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.setOption("show", nextValue(m.options(), "show"))
 	case key.Matches(msg, m.keys.Group):
 		return m, m.setOption("group", nextValue(m.options(), "group"))
+	case key.Matches(msg, m.keys.Layout):
+		return m, m.setOption("layout", nextValue(m.options(), "layout"))
 	case key.Matches(msg, m.keys.Shallow):
 		return m, m.foldTo(true)
 	case key.Matches(msg, m.keys.Deeper):
@@ -1215,16 +1331,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			func(i int) bool { return m.rows[i].selectable() })
 		m.renderList()
 		return m, m.updatePreview()
-	case key.Matches(msg, m.keys.Shrink):
-		return m, m.resizeList(false)
-	case key.Matches(msg, m.keys.Grow):
-		return m, m.resizeList(true)
-	case key.Matches(msg, m.keys.PrevUp):
-		m.prevVP.ScrollUp(3)
-		return m, nil
-	case key.Matches(msg, m.keys.PrevDown):
-		m.prevVP.ScrollDown(3)
-		return m, nil
+	case key.Matches(msg, m.keys.Shrink), key.Matches(msg, m.keys.Grow):
+		return m, m.resizeKey(msg)
 	}
 
 	return m.toInput(msg)
@@ -1253,7 +1361,7 @@ func (m model) toInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // overList reports whether a screen cell is inside the list.
 func (m *model) overList(x, y int) bool {
-	return inList(x, y, listY, m.listW(), m.bodyH())
+	return inList(x, y, listY, m.listW(), m.listH())
 }
 
 // handleClick moves the selection to the row under a left click on the list.
@@ -1287,8 +1395,12 @@ func (m model) render() string {
 	if m.currentRow() != nil {
 		pos = scrollPos(&m.prevVP)
 	}
-	out = append(out, splitMain(m.listLines(), strings.Split(m.rightColumn(), "\n"),
-		m.listW(), m.detailsW(), m.counter(), pos)...)
+	preview := strings.Split(m.rightColumn(), "\n")
+	if m.columns() {
+		out = append(out, splitMain(m.listLines(), preview, m.listW(), m.detailsW(), m.counter(), pos)...)
+	} else {
+		out = append(out, stackMain(m.listLines(), preview, w, m.detailsH(), m.counter(), pos)...)
+	}
 	out = append(out, framed(w, footLine(m.flash, m.netErr, "", m.help, m.keys, w-4)), hline(w, "╰", "╯", "", ""))
 	if m.panel.open {
 		keys := keyLines(m.help, m.keys, w-10)
@@ -1318,7 +1430,7 @@ func (m model) counter() string {
 // status is the refresh mark, for the edge over the input.
 func (m model) status() string { return refreshMark(m.refreshing, m.stale) }
 
-// listLines is the list as exactly bodyH lines of listW cells.
+// listLines is the list as exactly listH lines of listW cells.
 // leftColumn is the list, or the reason there is nothing to list. A fetch
 // error is on the help line already.
 func (m model) leftColumn() string {
@@ -1332,7 +1444,7 @@ func (m model) leftColumn() string {
 	return emptyList("", m.ti.Value(), reason, m.listW())
 }
 
-func (m model) listLines() []string { return fitLines(m.leftColumn(), m.bodyH(), m.listW()) }
+func (m model) listLines() []string { return fitLines(m.leftColumn(), m.listH(), m.listW()) }
 
 func (m model) rightColumn() string {
 	w := m.prevW()

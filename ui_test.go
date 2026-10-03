@@ -362,7 +362,7 @@ func TestResizeList(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	next, _ := testModel(t).Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m := next.(model)
-	m.split = splitDefault
+	m.splitColumns = splitColumnsDefault
 	m.resize()
 	w := m.listW()
 	shift := func(code rune) {
@@ -371,8 +371,10 @@ func TestResizeList(t *testing.T) {
 	}
 
 	shift(tea.KeyRight)
-	if m.listW() <= w || m.split != splitDefault-splitStep || loadSplit(stateDir()) != m.split {
-		t.Errorf("grow: list %d -> %d, split=%d, saved=%d", w, m.listW(), m.split, loadSplit(stateDir()))
+	if m.listW() <= w || m.splitColumns != splitColumnsDefault-splitStep ||
+		loadSplit(stateDir(), splitColumnsFile, splitColumnsDefault) != m.splitColumns {
+		t.Errorf("grow: list %d -> %d, split=%d, saved=%d", w, m.listW(), m.splitColumns,
+			loadSplit(stateDir(), splitColumnsFile, splitColumnsDefault))
 	}
 	if m.listVP.Width() != m.listW() || m.prevVP.Width() != m.prevW() {
 		t.Errorf("viewports %d | %d, want %d | %d", m.listVP.Width(), m.prevVP.Width(), m.listW(), m.prevW())
@@ -385,14 +387,14 @@ func TestResizeList(t *testing.T) {
 
 	shift(tea.KeyLeft)
 	shift(tea.KeyLeft)
-	if m.listW() >= w || m.split != splitDefault+splitStep {
-		t.Errorf("shrink: list %d -> %d, split=%d", w, m.listW(), m.split)
+	if m.listW() >= w || m.splitColumns != splitColumnsDefault+splitStep {
+		t.Errorf("shrink: list %d -> %d, split=%d", w, m.listW(), m.splitColumns)
 	}
 	for range 10 {
 		shift(tea.KeyLeft)
 	}
-	if m.split != splitMax {
-		t.Errorf("split should clamp at %d, got %d", splitMax, m.split)
+	if m.splitColumns != splitMax {
+		t.Errorf("split should clamp at %d, got %d", splitMax, m.splitColumns)
 	}
 }
 
@@ -513,7 +515,10 @@ func TestPanel(t *testing.T) {
 		t.Fatalf("the panel changed the frame: %d lines (list %d), want %d (list %d)", len(open), m.listVP.Height(), len(closed), list)
 	}
 	all := strings.Join(open, "\n")
-	for _, want := range []string{"╭─ options ", "Options", "Order", "‹created›", "PRs", "‹all›", "Rows", "‹two lines›", "Show", "Group", "‹tree›", "Titles", "‹short›", "Keys", "esc close", "pgup/pgdn", "⌥↑/⌥↓", "scroll the description", "resize the list", "order by updated"} {
+	if strings.Contains(all, "scroll the description") {
+		t.Errorf("the preview scrolls with the wheel only; no key says otherwise:\n%s", all)
+	}
+	for _, want := range []string{"╭─ options ", "Options", "Order", "‹created›", "PRs", "‹all›", "Rows", "‹two lines›", "Show", "Group", "‹tree›", "Titles", "‹short›", "Keys", "esc close", "pgup/pgdn", "⌥↑/⌥↓", "resize the list", "order by updated"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the panel lacks %q:\n%s", want, all)
 		}

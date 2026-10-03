@@ -206,21 +206,34 @@ Files are split by concern but everything stays in `package main`:
   nothing, and a write goes through a temporary file and a rename, so a popup
   closed mid-write, or two of them writing at once, never leave half a file
   for the next run. The same file in every tool of the family that keeps one.
+- `folds.go`: the saved folds (`folds.json`, through `jsonfile.go`):
+  `loadFolds`/`saveFolds` (the rows folded by hand and the `tab`/`shift+tab`
+  level) and `m.pruneFolds()` (a fold whose row no longer exists, dropped
+  after a complete refresh only). Not shared with the family: the other
+  pickers do not persist folds.
 - `frame.go`: the single-frame layout the pickers share: `frameHead`,
-  `splitMain` (list and preview) and the section rows (`mainY`, `listY`,
-  `frameRows`), drawn with the
+  `splitMain` (list and preview side by side, the columns layout) and
+  `stackMain` (list over preview, split by a horizontal divider, the rows
+  layout: bounded to exactly the preview's own row budget, unlike
+  `splitMain`'s implicit bound by zipping list and preview line for line)
+  and the section rows (`mainY`, `listY`, `frameRows`), drawn with the
   primitives of `border.go`. Copied, not imported: the same file ships in
   asgoto, asgotopr, asgotonotes, asgotosession and asgotochanged (all under
-  github.com/asumaran), and there is no shared library. A pull request only
+  github.com/asumaran), and there is no shared library; `stackMain` is this
+  repo's own addition, not yet ported to the others. A pull request only
   needs to change it here; the maintainer ports the change to the other
   copies.
-- `split.go`: the divider between the list and the preview: `loadSplit`,
-  `saveSplit`, `stepSplit`, `splitWidths`, `moveSplit` (one step, remembered)
-  and `sizePanes` (the list and the preview get their share of the main
-  section). Copied, not imported, like `frame.go`: the same file ships in
-  asgotopr, asgotonotes, asgotosession and asgotochanged.
+- `split.go`: the divider between the list and the preview, one file per
+  layout: `loadSplit`, `saveSplit`, `stepSplit`, `splitWidths`, `moveSplit`
+  (one step, remembered; all four take the file and the default as
+  parameters, unlike the family's own copy) and `sizePanes` (the list and
+  the preview get their share of the main section). Copied, not imported,
+  like `frame.go`: the same file ships in asgotopr, asgotonotes,
+  asgotosession and asgotochanged, without this repo's per-layout split.
 - `ui.go`: the bubbletea model/Update/View, styles, the options (`order`,
-  `prs`, `show`, `group`, `rows`, `titles`), folding (`fold`, `foldTo`) and
+  `prs`, `show`, `group`, `rows`, `titles`, `layout`), the effective layout
+  and its geometry (`columns`, `listW`/`listH`, `detailsW`/`detailsH`,
+  `resizeList`), folding (`fold`, `foldTo`) and
   the rows (`lead`: the gutter, the guides, the branch, the arrow or the
   bullet; the key in its level's color; the title faint; `detailWords`).
   The browser is opened from `main.go` after the TUI quits (`openURL`,
@@ -267,7 +280,7 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `ctrl+p`/`ctrl+n` a row, `pgup`/`pgdn` a page, `alt+↑`/`alt+↓` or
   `home`/`end` the ends. `home`/`end` are taken from the filter input's caret
   on purpose (`←`/`→` and `ctrl+e` still move it). The preview scrolls with
-  `shift+↑`/`shift+↓` only. The keys are listed in the panel.
+  the mouse wheel only: `shift+` arrows resize the divider. The keys are listed in the panel.
 - **The filter input** comes from `prompt.go` (the same file in every tool of
   the family). Inside herdr's popup the prompt is the arrow alone, because the
   pane's title (`[[panes]] title` in the manifest, the tool's name) already
@@ -301,7 +314,27 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   pending, all; `ctrl+t`), how (`Group`: tree, phase; `ctrl+g`), how many
   lines a row takes (`Rows`: two lines, one line) and which titles it shows
   (`Titles`: short, original); each is saved as a setting (`setting.go`) and
-  the help line says `f1 options`.
+  the help line says `f1 options`. `Layout` (below) is one of them, on `ctrl+l` too.
+- **Layout option** (`layoutMode`, saved as `layout`, `ctrl+l`, `m.columns()`):
+  `columns` (default, today's side by side) or `rows` (the preview under a
+  full-width list, split by a horizontal divider). `ctrl+l` cycles it like
+  `^s`/`^t`/`^g`: it is in `FullHelp` (the panel's key list) and next to the
+  option in the panel, but not on the foot's short help line. The *effective*
+  layout (`m.columns()`) falls back from a saved `columns` to `rows` on a
+  narrow terminal (`minColumnsW`, 60 cells, asgitlog's own floor), and from a
+  saved `rows` to `columns` when the body is under 5 lines (a list of 2, the
+  divider, and a preview of 2 do not fit); neither fallback touches the saved
+  setting. `setOption` calls `m.resize()` before the shared `renderList()`/
+  `updatePreview()` tail, so the viewports do not keep the old layout's sizes
+  until the next `tea.WindowSizeMsg`. In `rows`, the list takes the full
+  width (`listW() == innerW()`) and the preview's vertical budget
+  (`detailsH()`) is `split-rows`' percent of the body, clamped to a floor of
+  8 lines (less on a short body) and a ceiling that leaves the list at least
+  2 lines plus the divider; a header (a PR's can run 4-5 lines) taller than
+  that budget is cut, the same way a header taller than `bodyH` already was
+  in `columns` (`stackMain`, `frame.go`, bounds the preview to exactly
+  `detailsH` rows, dropping the rest, like `splitMain` does implicitly by
+  zipping list and preview line for line).
 - **Filter matches** look the same in every tool of the family and come from
   one place, `highlight.go` (the same file in each repo; it also owns `stSel`
   and `stMatch`): a match is the match color plus an underline on top of the
@@ -310,11 +343,18 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   ends a match would cut the background: every piece is rendered over `stSel`
   (`highlight(s, idx, stSel)`) and `selPad` fills the rest. Do not write a
   local highlighter.
-- **Resizable list**: `shift+←/→` move the divider in 5% steps, as in
-  asgitlog. The setting is the PREVIEW's share of the width, clamped to
-  30-85 and saved as `split-columns` in the state dir; the default is 75
-  (list 25%, preview 75%), the same in every picker of the family. Rows
-  must degrade for a narrow list instead of truncating their last columns.
+- **Resizable list**: the arrows of the divider's own axis move it, in the
+  *effective* layout (`resizeKey`): `shift+←/→` in columns, `shift+↑/↓` in
+  rows (up and left shrink the list; the other pair does nothing). It moves
+  (`resizeList`) in 5% steps, as in asgitlog, one split per layout so
+  switching layouts never disturbs the other's: the setting is the
+  PREVIEW's share, clamped to 30-85 and saved as `split-columns` (list 25%,
+  preview 75% by default, the same in every picker of the family) or
+  `split-rows` (50% by default: tree rows take two lines, so asgitlog's own
+  70% would leave about two tickets in view). `loadSplit`/`saveSplit`/
+  `moveSplit` (`split.go`) take the file and the default as parameters for
+  this reason. Rows must degrade for a narrow list instead of truncating
+  their last columns.
 - **Mouse**: the wheel follows the pointer, as in asgitlog: over the list
   (`overList`) it moves the selection through the same code as the arrow keys,
   anywhere else it scrolls the description. A left click on an issue row moves
@@ -445,8 +485,31 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   and its PRs by phase. `shift+tab` folds the tree a level shallower (all,
   then the deepest level, down to the roots alone), `tab` a level deeper
   and back to all (`foldLevel`, `deepest`): a level replaces the folds made
-  by hand (a folded stack stays); it flashes `level N`. Folds are for the
-  run only, and a query shows everything (a search never hides a hit).
+  by hand (a folded stack stays); it flashes `level N`. A query shows
+  everything (a search never hides a hit); the folds apply again once it is
+  cleared.
+- **Folds are saved** (`folds.go`), one file, `folds.json`
+  (`{"level": n, "keys": [...]}`, `keys` sorted for a deterministic file),
+  written atomically (`writeJSONFile`, `jsonfile.go`): `newModel` loads
+  `collapsed` and `depthNow` from it, `fold()` and `foldTo()` save both
+  after every change. It is a snapshot, not a depth policy: a level is
+  restored exactly (plus where `tab`/`shift+tab` continue from next), and a
+  ticket that arrives later (a refresh, or a fresh fetch after a restart)
+  shows unfolded, the same as it does today after a live refresh;
+  `foldTo` clamps a saved level deeper than the current tree to its
+  `deepest` before acting on it. A fold made by hand after a level keeps the
+  level as the point `tab` continues from, as before. `m.pruneFolds()`
+  drops a fold whose row no longer exists: a structural key (`stack:<name>`,
+  `group:<name>`, `section:<name>:<phase>` for each of `buildPhase`'s phase
+  names) only when it is still built from the stacks configured now, a
+  ticket's URL only when some entry (a ghost included) still holds it —
+  nothing is split on `:`, a key is only ever checked against this valid
+  set. Renaming a stack in the YAML, or a phase in the code, drops its fold;
+  that is accepted. Pruning is the *model*'s job, not `saveFolds`', and it
+  runs (and saves) only from `finishRefresh` when every source answered (no
+  `fetchErrs`): a cache read alone, or a partial refresh, trusts nothing
+  enough to prune, so a source that failed never costs its tickets their
+  folds.
 - **Short titles** (`summary.go`, `Titles: short | original`): one plain
   Spanish sentence of 6 to 14 words per ticket and per PR, written by Haiku
   through `claude -p` in the background, a child as a part of its parent's
@@ -573,11 +636,16 @@ phase view, the folds of a level, own levels), the local counters against
 a fake `gitRun`, the short titles against a fake `summarizeRun` (the
 batches, the hashes, the answers the CLI gives), ranking, grouping, key
 handling, partial refresh failure, View content: the rows as drawn, their
-colors, no bold). `TestMain` points `HERDR_PLUGIN_STATE_DIR` at a temp dir
+colors, no bold), the layout's effective fallback and its geometry (`listW`,
+`listH`, `detailsH`, `stackMain`) at several sizes, the saved folds
+(round-trip, pruning after a complete refresh only, the level clamped to the
+tree's own deepest). `TestMain` points `HERDR_PLUGIN_STATE_DIR` at a temp dir
 so tests never touch the real cache, `ASGOTOISSUES_CHECKOUTS` at it too so
 no real checkout is read, turns the summarizer off and lists everything
-(`defaultShow`); a test that presses a key under the panel or saves a
-setting takes a temp dir of its own. The pty sandbox saves `show=all` and
+(`defaultShow`); a test that presses a key under the panel, saves a setting,
+or folds or unfolds a row (which now also persists to `folds.json`) takes a
+temp dir of its own, so one test's fold or setting never leaks into the
+next's fresh model. The pty sandbox saves `show=all` and
 `titles=original` and sets `ASGOTOISSUES_NO_SUMMARIES`.
 
 For end-to-end verification without a TTY, `scripts/pty-check.py ./asgotoissues`

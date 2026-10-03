@@ -407,6 +407,7 @@ func TestGroupByPhase(t *testing.T) {
 // the deepest level, down to the roots alone), tab one deeper and back to
 // all; with a query they do nothing.
 func TestLevelKeys(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	m := treeTestModel(t)
 	shift := tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	tab := tea.KeyPressMsg{Code: tea.KeyTab}
@@ -440,6 +441,7 @@ func TestLevelKeys(t *testing.T) {
 // stack to it, enter says there is nothing to open, and the preview counts
 // the stack.
 func TestHeaderRows(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	m := treeTestModel(t)
 	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = res.(model)
@@ -510,6 +512,7 @@ func TestShortTitles(t *testing.T) {
 // the cursor moves there; on a ticket with nothing under it it says so;
 // with a query in the filter it is text.
 func TestSpaceFolds(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	m := treeTestModel(t)
 	space := tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	res, _ := m.Update(space)

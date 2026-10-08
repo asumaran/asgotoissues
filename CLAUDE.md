@@ -89,10 +89,17 @@ Files are split by concern but everything stays in `package main`:
   level: its own PRs', nothing inherited).
 - `local.go`: the local work on my open PRs: their checkouts under the
   roots (`ASGOTOISSUES_CHECKOUTS`, else `~/Developer`: each repo's
-  worktrees, matched by the origin's owner/repo and the branch), read as
-  the prompt counts them (`↑` commits on top of the PR's head, `+`
-  staged, `!` unstaged, `?` untracked), in the background; `gitRun` is the
-  seam the tests replace.
+  worktrees, matched by the origin's owner/repo and the branch,
+  `scanCheckouts`, shared with the workspace jump), read as the prompt
+  counts them (`↑` commits on top of the PR's head, `+` staged, `!`
+  unstaged, `?` untracked), in the background; `gitRun` is the seam the
+  tests replace.
+- `herdrws.go`: the jump to the herdr workspace of the selected row
+  (`ctrl+w`): `herdrRun` (the seam the tests replace, like `gitRun` and
+  `ghRun`), the `workspace list` parsing, `rowTarget` (the row's key and
+  the repo+branch pairs of its PRs), `focusWorkspaceCmd` (the resolution,
+  as a tea.Cmd so a failure flashes) and `jumpWorkspace` (the post-quit
+  `workspace focus` / `worktree open`, run from `main.go`).
 - `summary.go`: the short Spanish titles: `summaries.json` (by URL, with a
   hash of the title, the start of the body and the parent's summary),
   `pendingSummaries` (per stack, parents first, the summarized ancestors as
@@ -592,8 +599,27 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `open <url>` lets Chrome pick its `profile.last_used`, which is not the
   last focused window. It falls back to `open` (`xdg-open` off macOS);
   `ASGOTOISSUES_OPENER` replaces the whole thing. Jumping to a checkout / creating a
-  worktree for an issue was considered and rejected for v1. `enter` and
+  worktree for an issue was considered and rejected for v1 (the herdr
+  workspace jump below is the accepted shape of it). `enter` and
   `ctrl+o` both open.
+- **The herdr workspace jump** (`herdrws.go`): `ctrl+w` on a ticket or PR
+  row focuses the herdr workspace where that work lives, or opens its
+  worktree as one. The key is taken from the filter input (it loses
+  delete-word) on purpose; it is in the panel's key list, not on the foot.
+  Outside a herdr pane (`HERDR_ENV != 1`) it flashes `not inside herdr`.
+  The resolution runs pre-quit in a tea.Cmd, so a failure flashes with the
+  TUI alive; the execution runs post-quit in `main.go`, like `openURL`,
+  because the popup's pane closes with the process and its closing could
+  steal the focus back. A workspace is matched against `herdr workspace
+  list`, the first in sidebar order winning: by checkout path (the row's
+  PR heads resolved to local paths with `scanCheckouts`; the only match
+  that tells two repos apart — a specific workspace of a ticket with
+  several is reached through its PR's row), then by its `tokens.ticket`
+  (ticket rows only, case-insensitive), then by its label holding the key
+  with non-alphanumeric boundaries (a workspace herdr has no metadata
+  for). No workspace but a checkout on disk → `herdr worktree open --cwd
+  <path> --path <path> --focus`; nothing → `no workspace for <key>`.
+  Creating worktrees from the picker stays out of scope.
 - **Copy**: `ctrl+y` copies the issue key (`it.Key`), or a PR's URL on a PR
   row, with `copyCmd` (the shared `clipboard.go`) and the help line flashes
   `copied <key>`
@@ -643,7 +669,8 @@ server, issues cached by older versions, wiki conversion, the references
 and the state, needs and facts of a PR, linking, the tree (nesting,
 ghosts, the query walk, the order, PRs and show modes, the guides, the
 phase view, the folds of a level, own levels), the local counters against
-a fake `gitRun`, the short titles against a fake `summarizeRun` (the
+a fake `gitRun`, the workspace jump against a fake `herdrRun` (the match
+order, `rowTarget`, the key's gates), the short titles against a fake `summarizeRun` (the
 batches, the hashes, the answers the CLI gives), ranking, grouping, key
 handling, partial refresh failure, View content: the rows as drawn, their
 colors, no bold), the layout's effective fallback and its geometry (`listW`,
@@ -651,7 +678,8 @@ colors, no bold), the layout's effective fallback and its geometry (`listW`,
 (round-trip, pruning after a complete refresh only, the level clamped to the
 tree's own deepest). `TestMain` points `HERDR_PLUGIN_STATE_DIR` at a temp dir
 so tests never touch the real cache, `ASGOTOISSUES_CHECKOUTS` at it too so
-no real checkout is read, turns the summarizer off and lists everything
+no real checkout is read, stubs `herdrRun` with a failure so no test
+touches the real herdr, turns the summarizer off and lists everything
 (`defaultShow`); a test that presses a key under the panel, saves a setting,
 or folds or unfolds a row (which now also persists to `folds.json`) takes a
 temp dir of its own, so one test's fold or setting never leaks into the

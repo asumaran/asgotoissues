@@ -101,21 +101,22 @@ var (
 // ---- key bindings ----
 
 type keyMap struct {
-	Nav     listNav
-	Select  key.Binding
-	Quit    key.Binding
-	Shrink  key.Binding
-	Grow    key.Binding
-	Copy    key.Binding
-	Order   key.Binding
-	Show    key.Binding
-	Group   key.Binding
-	Layout  key.Binding
-	Fold    key.Binding
-	Shallow key.Binding // shift+tab: the tree one level less deep
-	Deeper  key.Binding // tab: one level more
-	Filter  key.Binding
-	Help    key.Binding
+	Nav       listNav
+	Select    key.Binding
+	Workspace key.Binding
+	Quit      key.Binding
+	Shrink    key.Binding
+	Grow      key.Binding
+	Copy      key.Binding
+	Order     key.Binding
+	Show      key.Binding
+	Group     key.Binding
+	Layout    key.Binding
+	Fold      key.Binding
+	Shallow   key.Binding // shift+tab: the tree one level less deep
+	Deeper    key.Binding // tab: one level more
+	Filter    key.Binding
+	Help      key.Binding
 }
 
 // ShortHelp is the help line: the tool's own actions, the panel's key and the
@@ -132,7 +133,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Filter, k.Shrink},
 		{k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
-		{k.Select, k.Copy, k.Order, k.Show, k.Group, k.Layout},
+		{k.Select, k.Workspace, k.Copy, k.Order, k.Show, k.Group, k.Layout},
 		{k.Fold, k.Shallow},
 		{k.Help, k.Quit},
 	}
@@ -142,7 +143,10 @@ func defaultKeys() keyMap {
 	return keyMap{
 		Nav:    defaultListNav(),
 		Select: key.NewBinding(key.WithKeys("enter", "ctrl+o"), key.WithHelp("enter", "open in browser")),
-		Quit:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc/q", "quit")),
+		// ctrl+w is taken from the filter input (it loses delete-word) on
+		// purpose: the jump is worth more than the editing key.
+		Workspace: key.NewBinding(key.WithKeys("ctrl+w"), key.WithHelp("^w", "herdr workspace")),
+		Quit:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc/q", "quit")),
 		// The divider moves along its own axis: ⇧←/⇧→ side by side, ⇧↑/⇧↓
 		// with the preview under the list (resizeKey).
 		Shrink: key.NewBinding(key.WithKeys("shift+left", "shift+up"), key.WithHelp("⇧←/⇧→ ⇧↑/⇧↓", "resize the list")),
@@ -228,6 +232,8 @@ type model struct {
 	previewStyle string
 
 	openURL string // opened in the browser after quit ("" = none)
+	wsFocus string // the herdr workspace focused after quit ("" = none)
+	wsOpen  string // the checkout opened as a herdr workspace after quit ("" = none)
 }
 
 // newModel builds the model from the cached snapshot. stale starts the
@@ -1214,6 +1220,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderList()
 		return m, nil
 
+	case wsMsg:
+		if msg.err != nil {
+			return m, m.flash.fail(msg.err.Error())
+		}
+		m.wsFocus, m.wsOpen = msg.focusID, msg.openPath
+		return m, tea.Quit
+
 	case summarizeStartMsg:
 		return m, m.summarizeNext()
 
@@ -1301,6 +1314,15 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, m.flash.fail("nothing to open")
+	case key.Matches(msg, m.keys.Workspace):
+		r := m.currentRow()
+		if r == nil || !r.opens() {
+			return m, m.flash.fail("nothing to open")
+		}
+		if !insideHerdr() {
+			return m, m.flash.fail("not inside herdr")
+		}
+		return m, focusWorkspaceCmd(rowTarget(r))
 	case key.Matches(msg, m.keys.Copy):
 		if r := m.currentRow(); r != nil && r.opens() {
 			if r.kind == rowPull {

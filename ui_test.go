@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -275,6 +276,11 @@ func TestMain(m *testing.M) {
 	os.Setenv("ASGOTOISSUES_CHECKOUTS", dir) // no repos: the tests never read the machine's checkouts
 	summarizerOff = true                     // nothing is spawned
 	defaultShow = showAll                    // the fixtures list everything unless a test asks otherwise
+	// Tests never touch the real herdr; the ones about the jump swap in
+	// their own fake.
+	herdrRun = func(context.Context, ...string) ([]byte, error) {
+		return nil, errTest("herdr stubbed out in tests")
+	}
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

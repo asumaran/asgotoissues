@@ -103,9 +103,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "asgotoissues:", err)
 		os.Exit(1)
 	}
-	if url := res.(model).openURL; url != "" {
+	final := res.(model)
+	if url := final.openURL; url != "" {
 		if err := openURL("asgotoissues", url); err != nil {
 			fmt.Fprintf(os.Stderr, "asgotoissues: open %s: %v\n", url, err)
+			os.Exit(1)
+		}
+	}
+	// The workspace jump runs after quit, like openURL: the popup's pane
+	// closes with the process and its closing could steal the focus back.
+	if final.wsFocus != "" || final.wsOpen != "" {
+		if err := jumpWorkspace(final.wsFocus, final.wsOpen); err != nil {
+			fmt.Fprintf(os.Stderr, "asgotoissues: %v\n", err)
 			os.Exit(1)
 		}
 	}

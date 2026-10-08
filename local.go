@@ -76,8 +76,11 @@ func localCmd(pulls []pull) tea.Cmd {
 // remoteRe takes owner/repo out of an origin URL, ssh or https.
 var remoteRe = regexp.MustCompile(`[:/]([^/:]+/[^/]+?)(?:\.git)?/?$`)
 
-// localStates finds the checkouts of the PRs under roots and reads them.
-func localStates(ctx context.Context, roots []string, pulls []pull) map[string]localState {
+// scanCheckouts maps owner/repo@branch → worktree path for every repo under
+// roots, by the origin remote and git worktree list. localStates reads the
+// checkouts of my PRs from it; the workspace jump (herdrws.go) resolves a
+// PR's branch to the path a herdr workspace would have.
+func scanCheckouts(ctx context.Context, roots []string) map[string]string {
 	checkouts := map[string]string{} // owner/repo@branch → worktree path
 	for _, root := range roots {
 		dirs, _ := os.ReadDir(root)
@@ -113,6 +116,12 @@ func localStates(ctx context.Context, roots []string, pulls []pull) map[string]l
 			}
 		}
 	}
+	return checkouts
+}
+
+// localStates finds the checkouts of the PRs under roots and reads them.
+func localStates(ctx context.Context, roots []string, pulls []pull) map[string]localState {
+	checkouts := scanCheckouts(ctx, roots)
 	out := map[string]localState{}
 	for _, p := range pulls {
 		path, ok := checkouts[strings.ToLower(p.Repo)+"@"+p.Head]

@@ -162,8 +162,9 @@ Files are split by concern but everything stays in `package main`:
   color, else the help cut to the width; with a context (`info`, styled with
   `stInfo` and fitted to `footRoom`) the flash, the notice or the context on
   the left and the panel's key alone on the right (`panelHint`, taken from
-  the tool's own `ShortHelp`). This tool has no context, so its foot is the
-  help. The same file in every tool of the family.
+  the tool's own `ShortHelp`). This tool's context is the refresh status
+  (`refreshmark.go`); with nothing to say the foot is the help. The same file
+  in every tool of the family.
 - `panel.go`: the panel `f1` opens over the frame: options to change in
   place and every key under them (`option`, `panel`, `panelLines`,
   `overlay`). The same file in every tool of the family.
@@ -195,11 +196,12 @@ Files are split by concern but everything stays in `package main`:
   In herdr's popup the message is held until enter, because the pane closes
   with the process and takes stderr with it; in a shell it is plain stderr and
   exit 1. The same file in every tool of the family that needs it.
-- `refreshmark.go`: `refreshMark`: what the edge over the input says about a
-  list that is fetched in the background and shown from a cache meanwhile:
-  `refreshing…` while the fetch runs and, after one that failed, a standing
-  `refresh failed` in the error color. The same file in every tool of the
-  family that needs it.
+- `refreshmark.go`: `refreshMark` and `newRefreshSpinner`: what the foot's
+  context says about a list that is fetched in the background and shown from
+  a cache meanwhile: a braille-dots spinner (bubbles' `spinner`, ticked only
+  while a refresh runs) and `refreshing…`, and, after a fetch that failed, a
+  standing `refresh failed` in the error color. The same file in every tool
+  of the family that needs it.
 - `rank.go`: `rank`: with a query the list is a search result, best score
   first; in a grouped list the groups go by their best item and keep their
   items together, and equal scores keep the list's own order. The same file in
@@ -283,12 +285,14 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
 
 - **Layout**: one rounded frame of sections split by shared edges, the layout
   asgitlog introduced and every picker of the family follows (`frame.go`, the
-  same file in each repo): the filter input (the border over it carries the
-  refresh mark), the main section (list and preview split by a divider; its bottom edge carries the
+  same file in each repo): the filter input, the main section (list and preview split by a divider; its bottom edge carries the
   matches/total counter under the list and, while the preview overflows, its
   scroll position on the right), and the help. The foot carries a context only where the
-  rest of the screen cannot say it (asgitlog: repo and branch); a title is not
-  context, so there is none here and the foot is the help. The stacks already head their groups in the
+  rest of the screen cannot say it (asgitlog: repo and branch); here the
+  context is the refresh status (`refreshmark.go`), so anything about the
+  background fetch lives in one place, the foot, and with nothing to say the
+  foot is the help. A title is not context: the pane's title says the tool,
+  and the stacks already head their groups in the
   list. The list starts on screen row `listY`, one cell in from the left side,
   which is what the click-to-row math uses. Errors and notices take the help
   line.
@@ -574,19 +578,24 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   the asdev skill uses `account_id` for that reason, but here the query is
   fixed and the user is always the token owner).
 - **Caching**: stale-while-revalidate; first frame always renders from
-  `issuecache.json`; snapshots fresher than 60s skip the refresh. Sources
+  `issuecache.json`; snapshots fresher than 60s skip the refresh. `ctrl+r`
+  is the manual refresh: it refetches every source now, whatever the
+  snapshot's age (the refresh mark at the foot is the feedback; a press
+  while one runs flashes `already refreshing`); it is in the panel's key
+  list, not on the foot's short help. A complete refresh, manual or not,
+  clears a standing `refresh failed` mark. Sources
   (one per tracker of a stack, plus its pulls source) refresh concurrently,
   one tea.Cmd each; a failed source keeps its cached issues or PRs (a pulls
   error reads `<stack> PRs: …`) and the snapshot's `FetchedAt` is NOT
   advanced, so the next open retries; a source that answers with nothing
-  clears its part. Errors take the help line, never a modal; the refresh mark sits
-  on the edge over the input.
+  clears its part. Errors take the help line, never a modal; the refresh
+  mark, spinner and all, is the foot's context (`refreshmark.go`).
 - **A failed refresh** keeps the cached list on screen. The error (`netErr`,
-  the failed sources joined) takes the help line through the shared
-  `footLine`, in the error color, until the next key gives the help back; the
-  edge over the input keeps a red `refresh failed` mark (`refreshMark`,
+  the failed sources joined) takes the foot through the shared
+  `footLine`, in the error color, until the next key gives it back; then the
+  foot's context keeps a red `refresh failed` mark (`refreshMark`,
   `m.stale`) for as long as the list is the cached one, so the state outlives
-  the message. An error that keeps a list from loading at all is shown in the
+  the message in the same place the message was. An error that keeps a list from loading at all is shown in the
   list in the error color in every tool of the family (`emptyList`); here a
   fetch error never empties the list, so it has no such case. A config that
   cannot be read keeps the tool from starting and goes through the shared

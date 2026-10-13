@@ -15,6 +15,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -108,6 +109,7 @@ type keyMap struct {
 	Shrink    key.Binding
 	Grow      key.Binding
 	Copy      key.Binding
+	Refresh   key.Binding
 	Order     key.Binding
 	Show      key.Binding
 	Group     key.Binding
@@ -133,7 +135,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Filter, k.Shrink},
 		{k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
-		{k.Select, k.Workspace, k.Copy, k.Order, k.Show, k.Group, k.Layout},
+		{k.Select, k.Workspace, k.Copy, k.Refresh, k.Order, k.Show, k.Group, k.Layout},
 		{k.Fold, k.Shallow},
 		{k.Help, k.Quit},
 	}
@@ -152,10 +154,13 @@ func defaultKeys() keyMap {
 		Shrink: key.NewBinding(key.WithKeys("shift+left", "shift+up"), key.WithHelp("⇧←/⇧→ ⇧↑/⇧↓", "resize the list")),
 		Grow:   key.NewBinding(key.WithKeys("shift+right", "shift+down")),
 		Copy:   key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the key")),
-		Order:  key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "order")),
-		Show:   key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "show")),
-		Group:  key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "group")),
-		Layout: key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("^l", "layout")),
+		// The manual refresh: refetch every source now, whatever the
+		// snapshot's age.
+		Refresh: key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "refresh")),
+		Order:   key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "order")),
+		Show:    key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "show")),
+		Group:   key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "group")),
+		Layout:  key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("^l", "layout")),
 		// space folds only while the filter is empty; otherwise it is text.
 		Fold:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "fold/unfold (empty filter)")),
 		Shallow: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab/tab", "fold/unfold a level")),
@@ -205,7 +210,8 @@ type model struct {
 	fetchErrs  []string
 	refreshing bool
 	netErr     string
-	stale      bool // the last refresh failed: the list is the cached one (see status)
+	stale      bool          // the last refresh failed: the list is the cached one (see status)
+	spin       spinner.Model // animates the refresh mark while a fetch runs (refreshmark.go)
 
 	// ui
 	rows         []row
@@ -255,6 +261,7 @@ func newModel(stacks []stack, cache issueCache, stale bool) model {
 		layout:       parseLayout(loadSetting(stateDir(), "layout")),
 		collapsed:    collapsed,
 		depthNow:     depthNow,
+		spin:         newRefreshSpinner(),
 		summ:         loadSummaries(),
 		summTried:    map[string]bool{},
 		local:        map[string]localState{},
@@ -1121,6 +1128,25 @@ func (m *model) updatePreview() tea.Cmd {
 
 // ---- refresh plumbing ----
 
+// startRefresh refetches every source now, whatever the snapshot's age: the
+// manual refresh (ctrl+r). The refresh mark on the edge over the input is the
+// feedback; a press while one already runs only says so.
+func (m *model) startRefresh() tea.Cmd {
+	if m.refreshing {
+		return m.flash.fail("already refreshing")
+	}
+	if len(m.sources) == 0 {
+		return m.flash.fail("nothing to refresh")
+	}
+	m.refreshing = true
+	m.pending = len(m.sources)
+	cmds := []tea.Cmd{m.spin.Tick}
+	for _, s := range m.sources {
+		cmds = append(cmds, fetchSourceCmd(s))
+	}
+	return tea.Batch(cmds...)
+}
+
 // finishRefresh swaps in the merged list. The snapshot is always persisted
 // (failed sources keep their cached tickets and PRs), but FetchedAt only
 // advances when every source succeeded so a partial failure revalidates on
@@ -1133,6 +1159,10 @@ func (m *model) finishRefresh() tea.Cmd {
 	complete := len(m.fetchErrs) == 0
 	if complete {
 		fetchedAt = time.Now()
+		// A complete refresh ends a standing `refresh failed` mark: the list
+		// is no longer the cached one (a manual refresh can follow a failed
+		// one within the same run).
+		m.stale = false
 	} else {
 		m.netErr = strings.Join(m.fetchErrs, " · ")
 		m.stale = true
@@ -1162,6 +1192,7 @@ func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{textinput.Blink, tea.RequestBackgroundColor, localCmd(m.pulls),
 		func() tea.Msg { return summarizeStartMsg{} }}
 	if m.refreshing {
+		cmds = append(cmds, m.spin.Tick)
 		for _, s := range m.sources {
 			cmds = append(cmds, fetchSourceCmd(s))
 		}
@@ -1197,6 +1228,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.finishRefresh()
+
+	case spinner.TickMsg:
+		// The spinner ticks only while a refresh runs: not scheduling the next
+		// tick is what stops it.
+		if !m.refreshing {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 
 	case tea.BackgroundColorMsg:
 		return m, m.setPreviewStyle(glamourStyle(msg))
@@ -1331,6 +1372,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, copyCmd("asgotoissues", "", r.e.it.Key)
 		}
 		return m, copyCmd("asgotoissues", "", "")
+	case key.Matches(msg, m.keys.Refresh):
+		return m, m.startRefresh()
 	case key.Matches(msg, m.keys.Order):
 		return m, m.setOption("order", nextValue(m.options(), "order"))
 	case key.Matches(msg, m.keys.Show):
@@ -1410,10 +1453,11 @@ func (m model) handleClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 func (m model) View() tea.View { return popupView(m.render(), true) }
 
 // render stacks the sections in one frame (see frame.go); the tests assert on
-// it. There is no context line: the stacks already head their groups.
+// it. The foot's context is the refresh status; the stacks already head
+// their groups, so it says nothing else.
 func (m model) render() string {
 	w := m.width
-	out := frameHead(w, withDevMark(m.status()), m.ti.View())
+	out := frameHead(w, devMark(), m.ti.View())
 	pos := ""
 	if m.currentRow() != nil {
 		pos = scrollPos(&m.prevVP)
@@ -1424,7 +1468,7 @@ func (m model) render() string {
 	} else {
 		out = append(out, stackMain(m.listLines(), preview, w, m.detailsH(), m.counter(), pos)...)
 	}
-	out = append(out, framed(w, footLine(m.flash, m.netErr, "", m.help, m.keys, w-4)), hline(w, "╰", "╯", "", ""))
+	out = append(out, framed(w, footLine(m.flash, m.netErr, m.status(), m.help, m.keys, w-4)), hline(w, "╰", "╯", "", ""))
 	if m.panel.open {
 		keys := keyLines(m.help, m.keys, w-10)
 		out = overlay(out, panelLines(m.options(), m.panel.cursor, keys, w-4, len(out)-2), w)
@@ -1450,8 +1494,8 @@ func (m model) counter() string {
 	return stCount.Render(strconv.Itoa(n) + "/" + strconv.Itoa(total))
 }
 
-// status is the refresh mark, for the edge over the input.
-func (m model) status() string { return refreshMark(m.refreshing, m.stale) }
+// status is the refresh mark, the foot's context (footLine's info).
+func (m model) status() string { return refreshMark(m.spin, m.refreshing, m.stale) }
 
 // listLines is the list as exactly listH lines of listW cells.
 // leftColumn is the list, or the reason there is nothing to list. A fetch

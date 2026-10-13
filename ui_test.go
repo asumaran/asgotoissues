@@ -262,6 +262,41 @@ func TestSourceMsgPartialFailureKeepsCache(t *testing.T) {
 	}
 }
 
+func TestManualRefresh(t *testing.T) {
+	m := testModel(t)
+	// ctrl+r starts a refresh of every source, however fresh the snapshot.
+	mm, cmd := m.handleKey(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	res := mm.(model)
+	if !res.refreshing || res.pending != len(res.sources) || cmd == nil {
+		t.Fatalf("ctrl+r should refetch every source: refreshing=%v pending=%d cmd=%v",
+			res.refreshing, res.pending, cmd)
+	}
+	plain := strings.Split(ansi.Strip(res.render()), "\n")
+	if foot := plain[len(plain)-2]; !strings.Contains(foot, "refreshing…") {
+		t.Errorf("the foot should say a refresh runs: %s", foot)
+	}
+	// A second press while one runs only flashes; the running one is kept.
+	mm, _ = res.handleKey(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	again := mm.(model)
+	if again.pending != res.pending || again.flash.text != "already refreshing" || !again.flash.bad {
+		t.Errorf("a second ctrl+r should flash and change nothing: pending=%d flash=%q",
+			again.pending, again.flash.text)
+	}
+}
+
+func TestCompleteRefreshClearsStale(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir()) // a complete refresh prunes and saves folds
+	m := testModel(t)
+	m.stale = true // a failed refresh left its mark
+	m.refreshing = true
+	m.pending = 2
+	mm, _ := m.Update(sourceMsg{source: "alpha/jira", issues: nil})
+	mm, _ = mm.(model).Update(sourceMsg{source: "beta/jira", issues: nil})
+	if res := mm.(model); res.stale {
+		t.Errorf("a complete refresh should clear the stale mark")
+	}
+}
+
 type errTest string
 
 func (e errTest) Error() string { return string(e) }
@@ -654,20 +689,24 @@ func TestSelectedRowSpansListWidth(t *testing.T) {
 	}
 }
 
-// TestNetworkErrorGivesTheHelpLineBack: a failed refresh takes the help line
-// like a notice, until the next key; the edge over the input keeps saying the
-// list is the cached one.
-func TestNetworkErrorGivesTheHelpLineBack(t *testing.T) {
+// TestNetworkErrorGivesTheFootBack: a failed refresh takes the foot like a
+// notice, until the next key; then the standing refresh mark keeps saying the
+// list is the cached one, in the same place.
+func TestNetworkErrorGivesTheFootBack(t *testing.T) {
 	m := testModel(t)
 	m.netErr, m.stale = "gh: could not resolve host", true
 	plain := strings.Split(ansi.Strip(m.render()), "\n")
-	if !strings.Contains(plain[len(plain)-2], "could not resolve host") || !strings.Contains(plain[0], "refresh failed") {
-		t.Fatalf("the error should take the help line and mark the edge:\n%s\n%s", plain[0], plain[len(plain)-2])
+	if foot := plain[len(plain)-2]; !strings.Contains(foot, "could not resolve host") {
+		t.Fatalf("the error should take the foot: %s", foot)
 	}
 	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	plain = strings.Split(ansi.Strip(res.(model).render()), "\n")
-	if !strings.Contains(plain[len(plain)-2], "type filter") || !strings.Contains(plain[0], "refresh failed") {
-		t.Errorf("the next key gives the help line back, the mark stays:\n%s\n%s", plain[0], plain[len(plain)-2])
+	foot := plain[len(plain)-2]
+	if !strings.Contains(foot, "refresh failed") || !strings.Contains(foot, "f1 options") {
+		t.Errorf("the next key leaves the standing mark and the panel's key: %s", foot)
+	}
+	if strings.Contains(plain[0], "refresh failed") {
+		t.Errorf("the top edge no longer carries the mark: %s", plain[0])
 	}
 }
 

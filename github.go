@@ -99,10 +99,10 @@ type githubProvider struct{ s stack }
 func (githubProvider) kind() string { return kindGitHub }
 
 func (p githubProvider) fetch(ctx context.Context) (fetched, error) {
-	ctx, cancel := context.WithTimeout(ctx, ghTimeout*ghMaxPages)
+	ctx, cancel := context.WithTimeout(withGHAccount(ctx, p.s.Account), ghTimeout*ghMaxPages)
 	defer cancel()
 
-	nodes, err := ghSearch[ghIssueNode](ctx, ghIssuesQuery, "is:issue is:open archived:false assignee:@me"+ghOwners(p.s.Orgs))
+	nodes, err := ghSearch[ghIssueNode](ctx, ghIssuesQuery, "is:issue is:open archived:false assignee:@me"+p.s.ghScope())
 	if err != nil {
 		return fetched{}, fmt.Errorf("%s: %w", p.s.Name, err)
 	}
@@ -130,13 +130,21 @@ func (p githubProvider) fetch(ctx context.Context) (fetched, error) {
 	return fetched{issues: out}, nil
 }
 
-// ghOwners is the search's owner qualifiers.
-func ghOwners(orgs []string) string {
-	owners := ""
-	for _, o := range orgs {
-		owners += " user:" + o
+// ghScope is the stack's search scope as qualifiers, with a leading space:
+// the ones ghScopes settled (`user:` per owner, `repo:` per repository under
+// an owner another stack shares), else `user:` per owner for a stack built
+// without it.
+func (s stack) ghScope() string {
+	scope := s.Scope
+	if scope == nil {
+		for _, o := range s.Orgs {
+			scope = append(scope, "user:"+o)
+		}
 	}
-	return owners
+	if len(scope) == 0 {
+		return ""
+	}
+	return " " + strings.Join(scope, " ")
 }
 
 // ghSearch pages through one search of the query's node type. A response

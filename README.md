@@ -55,6 +55,16 @@ stacks:
     issues: [github]
     github:
       org: your-login
+      account: your-login               # the gh account to use (optional)
+    repos:
+      - your-login/shop                 # splits the owner with `sideproject`
+  sideproject:
+    issues: [github]
+    github:
+      org: your-login
+      account: your-login
+    repos:
+      - your-login/sideproject
   legacy:                               # no `issues:` key: Jira only
     jira:
       type: server
@@ -72,6 +82,14 @@ GitHub goes through the [gh](https://cli.github.com) CLI, so there is nothing
 to configure beyond `gh auth login`. It is needed by every stack with a
 `github.org` (or `orgs`): those list GitHub issues when `issues:` says so,
 and always get their pull requests from there, a Jira-only stack included.
+
+A stack covers its whole owner, unless another stack shares that owner: then
+each one covers only the repositories it lists under `repos:` (an owner
+shared without a `repos:` entry under it is a config error), so a ticket or
+a PR shows under one stack. If you are signed in to gh with more than one
+account (`gh auth login` twice), name the one a stack goes through with
+`github.account`: gh searches only with its active account, and a stack
+without the key goes through that one.
 
 ## Usage
 

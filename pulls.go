@@ -112,7 +112,7 @@ type pullsProvider struct{ s stack }
 func (pullsProvider) kind() string { return kindPulls }
 
 func (p pullsProvider) fetch(ctx context.Context) (fetched, error) {
-	ctx, cancel := context.WithTimeout(ctx, ghTimeout*pullsPages*3)
+	ctx, cancel := context.WithTimeout(withGHAccount(ctx, p.s.Account), ghTimeout*pullsPages*3)
 	defer cancel()
 
 	got, err := p.pulls(ctx)
@@ -127,7 +127,7 @@ func (p pullsProvider) pulls(ctx context.Context) ([]pull, error) {
 	if err != nil {
 		return nil, err
 	}
-	owners := ghOwners(p.s.Orgs)
+	owners := p.s.ghScope()
 	open, err := ghSearch[ghPullNode](ctx, ghPullsQuery, "is:pr is:open archived:false involves:@me"+owners)
 	if err != nil {
 		return nil, err

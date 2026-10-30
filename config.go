@@ -41,7 +41,47 @@ func issueStacks(all []stack) ([]stack, error) {
 	if len(out) == 0 {
 		return nil, errors.New("config: no stack lists an issue tracker (add `issues:` or a jira.base_url)")
 	}
+	if err := ghScopes(out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// ghScopes settles the GitHub search scope of every stack: its owners, as
+// `user:` qualifiers, except an owner another stack of the list shares,
+// where each stack covers only its own repositories under it (`repo:`
+// qualifiers, from `repos:`), so an issue or a PR shows under one stack. A
+// stack that shares an owner and lists no repository under it is a config
+// error: the two would list the same things.
+func ghScopes(stacks []stack) error {
+	count := map[string]int{}
+	for _, st := range stacks {
+		for _, o := range st.Orgs {
+			count[strings.ToLower(o)]++
+		}
+	}
+	for i := range stacks {
+		st := &stacks[i]
+		var scope []string
+		for _, o := range st.Orgs {
+			if count[strings.ToLower(o)] < 2 {
+				scope = append(scope, "user:"+o)
+				continue
+			}
+			n := 0
+			for _, r := range st.Repos {
+				if owner, _, ok := strings.Cut(r, "/"); ok && strings.EqualFold(owner, o) {
+					scope = append(scope, "repo:"+r)
+					n++
+				}
+			}
+			if n == 0 {
+				return fmt.Errorf("config: %s shares the github owner %s with another stack: list its repositories under repos:", st.Name, o)
+			}
+		}
+		st.Scope = scope
+	}
+	return nil
 }
 
 // stackTrackers resolves the trackers of one stack and checks that each has

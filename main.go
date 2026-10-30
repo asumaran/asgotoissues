@@ -145,7 +145,10 @@ func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, s
 		st := stackNamed(stacks, s.stack)
 		where := st.BaseURL + " (" + st.Type + ")"
 		if s.p.kind() != kindJira {
-			where = strings.Join(st.Orgs, ", ")
+			where = strings.TrimSpace(st.ghScope())
+			if st.Account != "" {
+				where += " (as " + st.Account + ")"
+			}
 		}
 		fmt.Fprintf(w, "  %-16s %-6s %s\n", s.stack, s.p.kind(), where)
 	}

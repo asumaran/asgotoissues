@@ -459,7 +459,7 @@ func TestRunDumpTree(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"cache: 6 issues, 7 PRs, fetched ",
-		"  work             pulls  me\n",
+		"  work             pulls  user:me\n",
 		"order: key\n",
 		"▼ work\n ▼ w-1 epic\n │     open · not yours · ",
 		" └── ▼ w-10 story\n     │     in progress · ",
@@ -478,5 +478,39 @@ func TestRunDumpTree(t *testing.T) {
 	runDump(&out, stacks, cache, false, "", "", "attention", false)
 	if !strings.Contains(out.String(), "order: attention\n") || loadSetting(stateDir(), "order") != "key" {
 		t.Errorf("-order is used and not saved:\n%s", out.String())
+	}
+}
+
+func TestIssueStacksSplitASharedOwner(t *testing.T) {
+	stacks, err := parseStacks(`stacks:
+  shop:
+    issues: [github]
+    github:
+      org: Me
+    repos: [me/shop, other/thing]
+  tool:
+    issues: [github]
+    github:
+      org: me
+      orgs: [acme]
+    repos:
+      - Me/tool
+      - me/tool-docs
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stacks[0].ghScope(); got != " repo:me/shop" {
+		t.Errorf("shop scope = %q, want its repos under the shared owner only", got)
+	}
+	if got := stacks[1].ghScope(); got != " repo:Me/tool repo:me/tool-docs user:acme" {
+		t.Errorf("tool scope = %q, want its repos under the shared owner and the owner it has alone", got)
+	}
+	if got := (stack{Orgs: []string{"a", "B"}}).ghScope(); got != " user:a user:B" {
+		t.Errorf("a stack built by hand = %q, want user: per owner", got)
+	}
+	_, err = parseStacks("stacks:\n  a:\n    issues: [github]\n    github:\n      org: me\n    repos: [me/a]\n  b:\n    issues: [github]\n    github:\n      org: me\n    repos: [other/b]\n")
+	if err == nil || !strings.Contains(err.Error(), "b shares the github owner me") {
+		t.Errorf("a stack that shares an owner without repos under it: %v", err)
 	}
 }

@@ -95,3 +95,28 @@ func TestResolveCredential(t *testing.T) {
 		t.Error("cloud without email should fail")
 	}
 }
+
+func TestParseAsdevStacksAccountAndRepos(t *testing.T) {
+	stacks, err := parseAsdevStacks(`stacks:
+  home:
+    github:
+      org: me
+      account: " me-personal "
+    repos:
+      - me/tool
+      - "  "
+      - " me/other "
+  bare:
+    github:
+      org: acme
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := stacks[0]; h.Account != "me-personal" || strings.Join(h.Repos, ",") != "me/tool,me/other" {
+		t.Errorf("home = %+v, want the account and the repos trimmed", h)
+	}
+	if b := stacks[1]; b.Account != "" || b.Repos != nil {
+		t.Errorf("bare = %+v, want no account and no repos", b)
+	}
+}

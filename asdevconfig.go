@@ -30,6 +30,9 @@ type stack struct {
 	Issues   []string // the `issues:` list as written; nil when absent
 	Trackers []string // what the tool lists for the stack, filled by the tool
 	Orgs     []string // GitHub owners (orgs or users), `org` and `orgs` merged
+	Account  string   // the gh account the stack's GitHub goes through (`github.account`); empty is gh's active one
+	Repos    []string // the stack's repositories (`repos:`), owner/name
+	Scope    []string // the GitHub search qualifiers the tool settled (ghScopes); nil reads as `user:` per owner
 
 	// Jira
 	BaseURL        string // https://org.atlassian.net, no trailing slash
@@ -85,14 +88,35 @@ type rawJira struct {
 }
 
 type rawGitHub struct {
-	Org  string   `yaml:"org"`
-	Orgs []string `yaml:"orgs"`
+	Org     string   `yaml:"org"`
+	Orgs    []string `yaml:"orgs"`
+	Account string   `yaml:"account"`
 }
 
 type rawStack struct {
 	Issues []string   `yaml:"issues"`
 	Jira   *rawJira   `yaml:"jira"`
 	GitHub *rawGitHub `yaml:"github"`
+	Repos  []string   `yaml:"repos"`
+}
+
+// account is the gh account the block names, trimmed; "" without one.
+func (g *rawGitHub) account() string {
+	if g == nil {
+		return ""
+	}
+	return strings.TrimSpace(g.Account)
+}
+
+// cleanList is the list trimmed, without its empty items.
+func cleanList(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // owners merges `org` and `orgs`, first mention wins.
@@ -130,7 +154,7 @@ func parseAsdevStacks(doc string) ([]stack, error) {
 	order := stackKeyOrder(src)
 	out := make([]stack, 0, len(root.Stacks))
 	for name, rs := range root.Stacks {
-		st := stack{Name: name, Issues: rs.Issues, Orgs: rs.GitHub.owners(), Order: order[name]}
+		st := stack{Name: name, Issues: rs.Issues, Orgs: rs.GitHub.owners(), Account: rs.GitHub.account(), Repos: cleanList(rs.Repos), Order: order[name]}
 		if rs.Jira != nil {
 			st.BaseURL = strings.TrimRight(strings.TrimSpace(rs.Jira.BaseURL), "/")
 			st.Type = strings.ToLower(strings.TrimSpace(rs.Jira.Type))

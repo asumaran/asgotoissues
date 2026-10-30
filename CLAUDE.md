@@ -36,9 +36,12 @@ Files are split by concern but everything stays in `package main`:
 - `asdevconfig.go`: reading `asdev.local.md`: front-matter extraction,
   every stack in config order (a `yaml.Node` walk), netrc + env credentials
   for Jira (`resolveCredential`). The same file in every tool of the family
-  that reads the asdev config (asmeta too).
+  that reads the asdev config (asmeta too), plus, here, the stack's
+  `github.account` and its `repos:` (the family's copy does not read them
+  yet).
 - `config.go`: which trackers a stack lists (`issues:`, `parseStacks`,
-  `issueStacks`); `ASGOTOISSUES_CONFIG` names another config file.
+  `issueStacks`) and the GitHub search scope of each (`ghScopes`: a shared
+  owner split by `repos:`); `ASGOTOISSUES_CONFIG` names another config file.
 - `provider.go`: the tracker-neutral side: the `issue` struct (with its
   parent's key, summary and URL, and `Ghost` for one fetched as context), the
   `provider` interface (`kind`, `fetch` returning `fetched`: issues or PRs),
@@ -219,7 +222,15 @@ Files are split by concern but everything stays in `package main`:
   said it (the first line of its stderr), and a missing gh reads `gh not found
   (install the GitHub CLI)`; the stdout gh printed comes back with the error
   (a GraphQL response with errors still carries its data). The tests replace
-  it. The same file in every tool of the family that runs gh.
+  it. The same file in every tool of the family that runs gh, with one line
+  of its own here: the run takes the environment `ghEnv` builds.
+- `ghaccount.go`: the gh account a stack's GitHub goes through
+  (`github.account` in the config): `withGHAccount`/`ghAccount` (the account
+  travels with the context from the stack's two GitHub sources to `ghRun`),
+  `ghToken` (`gh auth token --user`, the seam the tests replace, asked once
+  per account) and `ghEnv` (the process's environment with `GH_TOKEN` set to
+  that token; nil, the process's own, without an account). Not shared with
+  the family yet.
 - `jsonfile.go`: `readJSONFile`, `writeJSONFile`, `writeFileAtomic`: a JSON
   cache in the state dir. A file that is missing or does not parse reads as
   nothing, and a write goes through a temporary file and a rename, so a popup
@@ -560,15 +571,30 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   written by an older version still renders.
 - **Config source is asdev's file, on purpose**: one place to declare a
   stack for both the Claude plugin and this picker. Only
-  `stacks.<name>.issues`, `stacks.<name>.jira.{base_url,type,email,api_token_env,username}`
-  and `stacks.<name>.github.{org,orgs}` are read. Without `issues:` a stack
-  lists Jira when it has a `jira.base_url`, so a config that only knows about
-  Jira needs no changes.
+  `stacks.<name>.issues`, `stacks.<name>.jira.{base_url,type,email,api_token_env,username}`,
+  `stacks.<name>.github.{org,orgs,account}` and `stacks.<name>.repos` are
+  read. Without `issues:` a stack lists Jira when it has a `jira.base_url`,
+  so a config that only knows about Jira needs no changes.
+- **Two stacks can share a GitHub owner** (`ghScopes`, `config.go`): a
+  stack's GitHub searches cover its owners (`user:` qualifiers), except an
+  owner another listed stack shares, where each stack covers only its own
+  repositories under it (`repo:` qualifiers from its `repos:`, asdev's own
+  "the repositories of this stack" list), so an issue or a PR shows under
+  one stack. A stack that shares an owner and lists no repository under it
+  is a config error. A stack alone on its owner keeps the whole owner: a new
+  repository there needs no config change. The settled scope is `Scope`;
+  `ghScope()` reads `user:` per owner when it was never settled (a stack
+  built by hand in a test). `-dump` prints each GitHub source's scope.
 - **GitHub goes through `gh`**, like asgotopr: no token handling here, and
   the user is whoever `gh` is logged in as (`viewer { login }` is what makes
   a PR mine). A stack lists the open issues assigned to that user under its
   owners (`assignee:@me`), one search for all of them; its PRs take three
-  more.
+  more. gh has one active account per host, so a user signed in with two
+  (a personal one and a work one) sees nothing under the owners of the other
+  one: a stack names its account with `github.account` (`ghaccount.go`), and
+  its two GitHub sources run gh with that account's token in `GH_TOKEN`
+  (`gh auth token --user`, asked once per run); the viewer, and so `Mine`,
+  is that account's. A stack without one goes through the active account.
 - **Jira auth**: `~/.netrc` (by host) beats the env var, because the plugin
   process may not inherit shell rc exports. Cloud = basic (email + token);
   server = bearer PAT unless `username` is set.

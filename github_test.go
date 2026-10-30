@@ -205,3 +205,52 @@ func TestGitHubFetchNestsParents(t *testing.T) {
 		t.Errorf("tree = %s", got)
 	}
 }
+
+func TestGitHubFetchUsesTheSettledScope(t *testing.T) {
+	const q = "is:issue is:open archived:false assignee:@me repo:me/tool user:acme"
+	asked := fakeGh(t, map[string]string{q: ghPage("", ghNode("me", "tool", 1, "one"))})
+	p := githubProvider{stack{Name: "home", Orgs: []string{"me", "acme"}, Scope: []string{"repo:me/tool", "user:acme"}}}
+	res, err := p.fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.issues) != 1 || (*asked)[0] != q {
+		t.Errorf("issues = %d, queries = %q", len(res.issues), *asked)
+	}
+}
+
+// Both GitHub sources of a stack run gh under the stack's account; a stack
+// without one leaves the context alone.
+func TestGitHubSourcesCarryTheStackAccount(t *testing.T) {
+	var accounts []string
+	prev := ghRun
+	ghRun = func(ctx context.Context, args ...string) ([]byte, error) {
+		accounts = append(accounts, ghAccount(ctx))
+		for _, a := range args {
+			if strings.Contains(a, "viewer") {
+				return []byte(`{"data":{"viewer":{"login":"me"}}}`), nil
+			}
+		}
+		return []byte(ghPage("")), nil
+	}
+	t.Cleanup(func() { ghRun = prev })
+	for _, st := range []stack{{Name: "home", Orgs: []string{"me"}, Account: "me-personal"}, {Name: "work", Orgs: []string{"acme"}}} {
+		for _, p := range []provider{githubProvider{st}, pullsProvider{st}} {
+			if _, err := p.fetch(context.Background()); err != nil {
+				t.Fatalf("%s %s: %v", st.Name, p.kind(), err)
+			}
+		}
+	}
+	for i, a := range accounts {
+		want := "me-personal"
+		if i >= len(accounts)/2 {
+			want = ""
+		}
+		if a != want {
+			t.Errorf("run %d went through %q, want %q (all: %q)", i, a, want, accounts)
+		}
+	}
+	if len(accounts) < 4 {
+		t.Errorf("only %d gh runs recorded", len(accounts))
+	}
+}

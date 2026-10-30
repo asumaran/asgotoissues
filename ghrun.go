@@ -15,9 +15,19 @@ import (
 // (the first line of its stderr), and a missing gh in plain words instead of
 // exec's. On a failure the stdout gh did print comes back with the error: a
 // GraphQL response with errors is an exit 1 that still carries its data, and
-// a caller may want it. The tests replace it.
+// a caller may want it. The tests replace it. Here it runs gh under the
+// account the context names, when one does (`ghEnv`, ghaccount.go): the
+// family's copy has no such line.
 var ghRun = func(ctx context.Context, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, "gh", args...).Output()
+	env, err := ghEnv(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	if env != nil {
+		cmd.Env = env
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {

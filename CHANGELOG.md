@@ -1,3 +1,9 @@
+## v0.14.0 (2026-10-30)
+
+* feat(github): per-stack gh account and repo scope (736906f)
+* feat(ui): add ctrl+r refresh and foot status mark (00da0ba)
+* feat(ui): add ctrl+w jump to the herdr workspace (ea44ddb)
+
 ## v0.13.0 (2026-10-03)
 
 * feat(prs): take newer pull request facts from the shared cache (481f838)

@@ -104,7 +104,36 @@ func (m *model) stackHeader(r *row, width int) string {
 	lines = append(lines,
 		count(doing, "in progress", stDoing)+stDim.Render(" · ")+count(blocked, "blocked", stBlocked)+stDim.Render(" · ")+count(todo, "to do", stTodo),
 		count(review, "PRs in review", stWarn)+stDim.Render(" · ")+count(draft, "draft", stDim)+stDim.Render(" · ")+count(merged, "merged", stOK))
+	// A source with its own interval says when it last answered: the rest
+	// of the list is as fresh as the foot says, this part may be hours old.
+	for _, s := range m.sources {
+		if s.stack != r.stack || s.every == 0 {
+			continue
+		}
+		lines = append(lines, stDim.Render(truncate(s.p.kind()+": "+sourceAge(m.cache, s), width)))
+	}
 	return strings.Join(lines, "\n")
+}
+
+// sourceAge says when a source with its own interval last answered and how
+// often it refreshes: `fetched 1h ago · refreshes every 2h`.
+func sourceAge(c issueCache, s source) string {
+	when := "never fetched"
+	if at, ok := c.Sources[s.id()]; ok {
+		when = "fetched " + relTime(at)
+	}
+	return when + " · refreshes every " + shortDuration(s.every)
+}
+
+// shortDuration is a duration as the config writes it: 2h, 90m, 30s.
+func shortDuration(d time.Duration) string {
+	switch {
+	case d%time.Hour == 0:
+		return strconv.Itoa(int(d/time.Hour)) + "h"
+	case d%time.Minute == 0:
+		return strconv.Itoa(int(d/time.Minute)) + "m"
+	}
+	return strconv.Itoa(int(d/time.Second)) + "s"
 }
 
 // previewHeader is the instant (non-glamour) header above a ticket's body:

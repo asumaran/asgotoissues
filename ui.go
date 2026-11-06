@@ -204,14 +204,17 @@ type model struct {
 	local     map[string]localState // my PRs' checkouts, by URL (local.go)
 
 	// background refresh
-	pending    int // sources still fetching
-	fresh      map[string][]issue
-	freshPulls map[string][]pull
-	fetchErrs  []string
-	refreshing bool
-	netErr     string
-	stale      bool          // the last refresh failed: the list is the cached one (see status)
-	spin       spinner.Model // animates the refresh mark while a fetch runs (refreshmark.go)
+	pending     int // sources still fetching
+	fresh       map[string][]issue
+	freshPulls  map[string][]pull
+	fetchErrs   []string
+	refreshing  bool
+	netErr      string
+	stale       bool          // the last refresh failed: the list is the cached one (see status)
+	spin        spinner.Model // animates the refresh mark while a fetch runs (refreshmark.go)
+	toFetch     []source      // the sources Init fetches: the due ones when the snapshot is stale
+	skipped     []source      // the sources the last refresh left out, their own interval not run out
+	lastRefresh time.Time     // the last ctrl+r, for the second press that includes the skipped ones
 
 	// ui
 	rows         []row
@@ -278,7 +281,11 @@ func newModel(stacks []stack, cache issueCache, stale bool) model {
 		height:       24,
 	}
 	if stale {
-		m.pending = len(m.sources)
+		// A source with its own interval that answered recently enough is
+		// left out of the opening refresh: its cached tickets stand.
+		m.toFetch, m.skipped = cache.due(m.sources, time.Now(), false)
+		m.pending = len(m.toFetch)
+		m.refreshing = m.pending > 0
 	}
 	m.syncHelp()
 	m.setEntries(cache.Issues, cache.Pulls)
@@ -1132,19 +1139,69 @@ func (m *model) updatePreview() tea.Cmd {
 // manual refresh (ctrl+r). The refresh mark on the edge over the input is the
 // feedback; a press while one already runs only says so.
 func (m *model) startRefresh() tea.Cmd {
+	now := time.Now()
+	// A second press right after one that skipped a source with its own
+	// interval includes it: that is the deliberate way to spend on it.
+	again := len(m.skipped) > 0 && now.Sub(m.lastRefresh) < refreshAgain
+	m.lastRefresh = now
 	if m.refreshing {
-		return m.flash.fail("already refreshing")
+		if !again {
+			return m.flash.fail("already refreshing")
+		}
+		cmds := []tea.Cmd{m.flash.set("refreshing " + sourceNames(m.skipped) + " too")}
+		for _, s := range m.skipped {
+			m.pending++
+			cmds = append(cmds, fetchSourceCmd(s))
+		}
+		m.skipped = nil
+		return tea.Batch(cmds...)
 	}
-	if len(m.sources) == 0 {
+	due, skipped := m.cache.due(m.sources, now, again)
+	if len(due) == 0 {
 		return m.flash.fail("nothing to refresh")
 	}
+	cmds := []tea.Cmd{m.launch(due, skipped)}
+	if len(skipped) > 0 {
+		cmds = append(cmds, m.flash.set(sourceNames(skipped)+" skipped ("+sourceAge(m.cache, skipped[0])+") · ctrl+r again to include it"))
+	}
+	return tea.Batch(cmds...)
+}
+
+// refreshAgain is how soon after a refresh that skipped a source a second
+// ctrl+r means "that one too".
+const refreshAgain = 3 * time.Second
+
+// launch starts a refresh of the due sources, the skipped ones remembered
+// for a second ctrl+r.
+func (m *model) launch(due, skipped []source) tea.Cmd {
 	m.refreshing = true
-	m.pending = len(m.sources)
+	m.pending = len(due)
+	m.skipped = skipped
 	cmds := []tea.Cmd{m.spin.Tick}
-	for _, s := range m.sources {
+	for _, s := range due {
 		cmds = append(cmds, fetchSourceCmd(s))
 	}
 	return tea.Batch(cmds...)
+}
+
+// sourceNames is how a flash names sources: `syft linear`.
+func sourceNames(sources []source) string {
+	var names []string
+	for _, s := range sources {
+		names = append(names, s.stack+" "+s.p.kind())
+	}
+	return strings.Join(names, ", ")
+}
+
+// intervalOf is a source's own refresh interval, 0 for one that follows the
+// snapshot's.
+func (m *model) intervalOf(id string) time.Duration {
+	for _, s := range m.sources {
+		if s.id() == id {
+			return s.every
+		}
+	}
+	return 0
 }
 
 // finishRefresh swaps in the merged list. The snapshot is always persisted
@@ -1167,7 +1224,7 @@ func (m *model) finishRefresh() tea.Cmd {
 		m.netErr = strings.Join(m.fetchErrs, " · ")
 		m.stale = true
 	}
-	m.cache = issueCache{FetchedAt: fetchedAt, Issues: merged, Pulls: pulls}
+	m.cache = issueCache{FetchedAt: fetchedAt, Issues: merged, Pulls: pulls, Sources: m.cache.Sources}
 	saveCache(m.cache)
 	m.fresh = nil
 	m.freshPulls = nil
@@ -1193,7 +1250,7 @@ func (m model) Init() tea.Cmd {
 		func() tea.Msg { return summarizeStartMsg{} }}
 	if m.refreshing {
 		cmds = append(cmds, m.spin.Tick)
-		for _, s := range m.sources {
+		for _, s := range m.toFetch {
 			cmds = append(cmds, fetchSourceCmd(s))
 		}
 	}
@@ -1223,6 +1280,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.freshPulls[msg.source] = msg.pulls
 		default:
 			m.fresh[msg.source] = msg.issues
+		}
+		if msg.err == nil && m.intervalOf(msg.source) > 0 {
+			m.cache.stamp(msg.source, time.Now())
 		}
 		if m.pending > 0 {
 			return m, nil

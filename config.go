@@ -101,8 +101,10 @@ func stackTrackers(st stack, listed []string) ([]string, error) {
 			return nil, fmt.Errorf("config: %s lists jira issues but has no jira.base_url", st.Name)
 		case kind == kindGitHub && len(st.Orgs) == 0:
 			return nil, fmt.Errorf("config: %s lists github issues but has no github.org", st.Name)
-		case kind != kindJira && kind != kindGitHub:
-			return nil, fmt.Errorf("config: %s: unknown issue tracker %q (jira, github)", st.Name, kind)
+		case kind == kindLinear && !st.HasLinear:
+			return nil, fmt.Errorf("config: %s lists linear issues but has no linear: block", st.Name)
+		case kind != kindJira && kind != kindGitHub && kind != kindLinear:
+			return nil, fmt.Errorf("config: %s: unknown issue tracker %q (jira, github, linear)", st.Name, kind)
 		}
 		if !slices.Contains(out, kind) {
 			out = append(out, kind)

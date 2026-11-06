@@ -19,9 +19,36 @@ const cacheFresh = 60 * time.Second
 // written by an older version (no pulls, issues without their newer fields)
 // still loads and renders.
 type issueCache struct {
-	FetchedAt time.Time `json:"fetched_at"`
-	Issues    []issue   `json:"issues"`
-	Pulls     []pull    `json:"pulls,omitempty"`
+	FetchedAt time.Time            `json:"fetched_at"`
+	Issues    []issue              `json:"issues"`
+	Pulls     []pull               `json:"pulls,omitempty"`
+	Sources   map[string]time.Time `json:"sources,omitempty"` // the last complete fetch of each source with its own interval, by source id
+}
+
+// stamp records that a source answered now. Only the sources with their own
+// interval are stamped: the others follow FetchedAt.
+func (c *issueCache) stamp(id string, at time.Time) {
+	if c.Sources == nil {
+		c.Sources = map[string]time.Time{}
+	}
+	c.Sources[id] = at
+}
+
+// due splits the sources into the ones to fetch now and the ones whose own
+// interval has not run out (their cached issues stand). A source without an
+// interval is always due; one with it is due when it was never stamped, when
+// its stamp is older than the interval, or when force says so.
+func (c issueCache) due(sources []source, now time.Time, force bool) (due, skipped []source) {
+	for _, s := range sources {
+		if s.every > 0 && !force {
+			if at, ok := c.Sources[s.id()]; ok && now.Sub(at) < s.every {
+				skipped = append(skipped, s)
+				continue
+			}
+		}
+		due = append(due, s)
+	}
+	return due, skipped
 }
 
 func cacheFile() string {

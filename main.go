@@ -127,15 +127,20 @@ func main() {
 // saved.
 func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, show, order string, summarizeNow bool) {
 	if stale {
-		merged, pulls, errs := refreshSynchronously(stacks, cache)
+		now := time.Now()
+		due, _ := cache.due(sourcesOf(stacks), now, false)
+		merged, pulls, stamped, errs := refreshSynchronously(stacks, due, cache)
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, "refresh failed:", e)
 		}
 		fetchedAt := cache.FetchedAt
 		if len(errs) == 0 {
-			fetchedAt = time.Now()
+			fetchedAt = now
 		}
-		cache = issueCache{FetchedAt: fetchedAt, Issues: merged, Pulls: pulls}
+		cache = issueCache{FetchedAt: fetchedAt, Issues: merged, Pulls: pulls, Sources: cache.Sources}
+		for _, id := range stamped {
+			cache.stamp(id, now)
+		}
 		saveCache(cache)
 	}
 	fmt.Fprintf(w, "config: %s\n", configPath())
@@ -144,7 +149,14 @@ func runDump(w io.Writer, stacks []stack, cache issueCache, stale bool, query, s
 	for _, s := range sourcesOf(stacks) {
 		st := stackNamed(stacks, s.stack)
 		where := st.BaseURL + " (" + st.Type + ")"
-		if s.p.kind() != kindJira {
+		switch s.p.kind() {
+		case kindLinear:
+			where = st.LinearConfigDir
+			if where == "" {
+				where = "the default Claude profile"
+			}
+			where += " (" + sourceAge(cache, s) + ")"
+		case kindGitHub, kindPulls:
 			where = strings.TrimSpace(st.ghScope())
 			if st.Account != "" {
 				where += " (as " + st.Account + ")"

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,6 +34,11 @@ type stack struct {
 	Account  string   // the gh account the stack's GitHub goes through (`github.account`); empty is gh's active one
 	Repos    []string // the stack's repositories (`repos:`), owner/name
 	Scope    []string // the GitHub search qualifiers the tool settled (ghScopes); nil reads as `user:` per owner
+
+	// Linear (read through Claude Code's Linear MCP, linear.go)
+	HasLinear       bool          // the `linear:` block is present
+	LinearConfigDir string        // the Claude Code profile whose Linear MCP is signed in (`claude_config_dir`); empty is the default one
+	LinearEvery     time.Duration // how often the Linear source refreshes (`refresh_every`, 2h by default)
 
 	// Jira
 	BaseURL        string // https://org.atlassian.net, no trailing slash
@@ -93,11 +99,31 @@ type rawGitHub struct {
 	Account string   `yaml:"account"`
 }
 
+type rawLinear struct {
+	ClaudeConfigDir string `yaml:"claude_config_dir"`
+	RefreshEvery    string `yaml:"refresh_every"`
+}
+
 type rawStack struct {
 	Issues []string   `yaml:"issues"`
 	Jira   *rawJira   `yaml:"jira"`
 	GitHub *rawGitHub `yaml:"github"`
+	Linear *rawLinear `yaml:"linear"`
 	Repos  []string   `yaml:"repos"`
+}
+
+// linearEveryDefault is how often a Linear source refreshes when the config
+// does not say: each refresh runs Claude on the user's account.
+const linearEveryDefault = 2 * time.Hour
+
+// expandHome resolves a leading `~` or `~/` to the user's home directory.
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[1:])
+		}
+	}
+	return p
 }
 
 // account is the gh account the block names, trimmed; "" without one.
@@ -165,6 +191,18 @@ func parseAsdevStacks(doc string) ([]stack, error) {
 			st.TokenEnv = strings.TrimSpace(rs.Jira.TokenEnv)
 			st.Username = strings.TrimSpace(rs.Jira.Username)
 			st.DefaultProject = strings.TrimSpace(rs.Jira.DefaultProject)
+		}
+		if rs.Linear != nil {
+			st.HasLinear = true
+			st.LinearConfigDir = expandHome(strings.TrimSpace(rs.Linear.ClaudeConfigDir))
+			st.LinearEvery = linearEveryDefault
+			if every := strings.TrimSpace(rs.Linear.RefreshEvery); every != "" {
+				d, err := time.ParseDuration(every)
+				if err != nil || d <= 0 {
+					return nil, fmt.Errorf("config: %s: linear.refresh_every %q is not a duration (2h, 90m)", name, every)
+				}
+				st.LinearEvery = d
+			}
 		}
 		out = append(out, st)
 	}

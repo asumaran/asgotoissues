@@ -20,6 +20,7 @@ import (
 const (
 	kindJira   = "jira"
 	kindGitHub = "github"
+	kindLinear = "linear"
 	kindPulls  = "pulls" // the PRs of a stack, never an issue tracker
 )
 
@@ -133,6 +134,7 @@ type provider interface {
 type source struct {
 	stack string
 	p     provider
+	every time.Duration // its own refresh interval; 0 follows the snapshot's (cacheFresh)
 }
 
 func (s source) id() string { return sourceID(s.stack, s.p.kind()) }
@@ -147,13 +149,15 @@ func sourcesOf(stacks []stack) []source {
 		for _, kind := range s.Trackers {
 			switch kind {
 			case kindJira:
-				out = append(out, source{s.Name, jiraProvider{s}})
+				out = append(out, source{s.Name, jiraProvider{s}, 0})
 			case kindGitHub:
-				out = append(out, source{s.Name, githubProvider{s}})
+				out = append(out, source{s.Name, githubProvider{s}, 0})
+			case kindLinear:
+				out = append(out, source{s.Name, linearProvider{s}, s.LinearEvery})
 			}
 		}
 		if len(s.Orgs) > 0 {
-			out = append(out, source{s.Name, pullsProvider{s}})
+			out = append(out, source{s.Name, pullsProvider{s}, 0})
 		}
 	}
 	return out
@@ -258,13 +262,16 @@ func fetchSourceCmd(s source) tea.Cmd {
 	}
 }
 
-// refreshSynchronously fetches every source inline (used by -dump). Returns
-// the merged issues and PRs plus one error per failed source.
-func refreshSynchronously(stacks []stack, cached issueCache) ([]issue, []pull, []error) {
+// refreshSynchronously fetches the given sources inline (used by -dump; a
+// source left out keeps its cached part). Returns the merged issues and PRs,
+// the ids of the sources with their own interval that answered (to stamp),
+// and one error per failed source.
+func refreshSynchronously(stacks []stack, sources []source, cached issueCache) ([]issue, []pull, []string, []error) {
 	freshIssues := map[string][]issue{}
 	freshPulls := map[string][]pull{}
+	var stamped []string
 	var errs []error
-	for _, s := range sourcesOf(stacks) {
+	for _, s := range sources {
 		got, err := s.p.fetch(context.Background())
 		if err != nil {
 			errs = append(errs, err)
@@ -275,6 +282,9 @@ func refreshSynchronously(stacks []stack, cached issueCache) ([]issue, []pull, [
 		} else {
 			freshIssues[s.id()] = got.issues
 		}
+		if s.every > 0 {
+			stamped = append(stamped, s.id())
+		}
 	}
-	return mergeStacks(stacks, freshIssues, cached.Issues), mergePulls(stacks, freshPulls, cached.Pulls), errs
+	return mergeStacks(stacks, freshIssues, cached.Issues), mergePulls(stacks, freshPulls, cached.Pulls), stamped, errs
 }

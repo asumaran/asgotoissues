@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	tea "charm.land/bubbletea/v2"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -512,5 +513,45 @@ func TestIssueStacksSplitASharedOwner(t *testing.T) {
 	_, err = parseStacks("stacks:\n  a:\n    issues: [github]\n    github:\n      org: me\n    repos: [me/a]\n  b:\n    issues: [github]\n    github:\n      org: me\n    repos: [other/b]\n")
 	if err == nil || !strings.Contains(err.Error(), "b shares the github owner me") {
 		t.Errorf("a stack that shares an owner without repos under it: %v", err)
+	}
+}
+
+func TestParseStacksLinear(t *testing.T) {
+	stacks, err := parseStacks("stacks:\n  syft:\n    issues: [linear]\n    linear:\n      claude_config_dir: ~/.claude-syft\n    github:\n      org: syftdata\n  quick:\n    issues: [linear]\n    linear:\n      refresh_every: 90m\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	if s := stacks[0]; !s.HasLinear || s.LinearConfigDir != filepath.Join(home, ".claude-syft") || s.LinearEvery != 2*time.Hour || strings.Join(s.Trackers, ",") != "linear" {
+		t.Errorf("syft = %+v", s)
+	}
+	if q := stacks[1]; q.LinearConfigDir != "" || q.LinearEvery != 90*time.Minute {
+		t.Errorf("quick = %+v", q)
+	}
+	if ids := sourceIDs(sourcesOf(stacks)); ids != "syft/linear syft/pulls quick/linear" {
+		t.Errorf("sources = %s", ids)
+	}
+	for _, s := range sourcesOf(stacks) {
+		if want := map[string]time.Duration{"syft/linear": 2 * time.Hour, "quick/linear": 90 * time.Minute, "syft/pulls": 0}[s.id()]; s.every != want {
+			t.Errorf("%s every = %s, want %s", s.id(), s.every, want)
+		}
+	}
+	for name, doc := range map[string]string{
+		"linear without its block": "stacks:\n  a:\n    issues: [linear]\n",
+		"a bad interval":           "stacks:\n  a:\n    issues: [linear]\n    linear:\n      refresh_every: soon\n",
+	} {
+		if _, err := parseStacks(doc); err == nil {
+			t.Errorf("%s should fail", name)
+		}
+	}
+}
+
+func TestRunDumpSaysWhenLinearWasFetched(t *testing.T) {
+	stacks := []stack{{Name: "syft", Trackers: []string{kindLinear}, HasLinear: true, LinearConfigDir: "/p/syft", LinearEvery: 2 * time.Hour}}
+	cache := issueCache{FetchedAt: time.Now(), Sources: map[string]time.Time{"syft/linear": time.Now().Add(-time.Hour)}}
+	var out bytes.Buffer
+	runDump(&out, stacks, cache, false, "", "", "", false)
+	if !strings.Contains(out.String(), "  syft             linear /p/syft (fetched 1h ago · refreshes every 2h)\n") {
+		t.Errorf("dump:\n%s", out.String())
 	}
 }

@@ -1,7 +1,7 @@
 # asgotoissues
 
 A [herdr](https://github.com/asumaran/herdr) plugin popup that lists your open
-issues from Jira and GitHub, grouped by stack as a tree (a sub-task under its
+issues from Jira, GitHub and Linear, grouped by stack as a tree (a sub-task under its
 story, the story under its epic), with the pull requests linked to each ticket
 and what each one needs from you, fuzzy search and a rendered preview of the
 description. Selecting a ticket or a PR opens it in the browser.
@@ -36,8 +36,9 @@ description = "asgotoissues (issue switcher)"
 asgotoissues reads the same file the [asdev](https://github.com/asumaran/asdev)
 Claude Code plugin uses, `~/.claude/asdev.local.md` (override with
 `ASGOTOISSUES_CONFIG`). Each stack is one group of the list. Its `issues:` key
-names the trackers to query, `jira`, `github` or both. A stack without the key
-lists Jira when it has a `jira.base_url`, and is skipped otherwise:
+names the trackers to query: `jira`, `github`, `linear`, or several. A stack
+without the key lists Jira when it has a `jira.base_url`, and is skipped
+otherwise:
 
 ```yaml
 ---
@@ -65,6 +66,14 @@ stacks:
       account: your-login
     repos:
       - your-login/sideproject
+  client:
+    issues: [linear]
+    linear:
+      claude_config_dir: ~/.claude-client   # the Claude Code profile whose Linear MCP is signed in (optional)
+      refresh_every: 2h                     # how often Linear is asked again (default)
+    github:
+      org: client-org
+      account: your-work-login
   legacy:                               # no `issues:` key: Jira only
     jira:
       type: server
@@ -90,6 +99,20 @@ a PR shows under one stack. If you are signed in to gh with more than one
 account (`gh auth login` twice), name the one a stack goes through with
 `github.account`: gh searches only with its active account, and a stack
 without the key goes through that one.
+
+Linear is read through [Claude Code](https://claude.com/claude-code)'s Linear
+MCP server, so there is no API key either: sign in to the Linear MCP once in
+the Claude Code profile the stack names (`linear.claude_config_dir`, the
+directory `CLAUDE_CONFIG_DIR` points at; leave it out for your default
+profile) and asgotoissues asks that profile, headless, to list the issues
+assigned to you and reads the MCP's own answers. Each refresh of a Linear
+stack is a short Claude run on that account (a few cents, about ten
+seconds), so the source refreshes on its own interval, `refresh_every` (2h
+by default) rather than with the rest of the list: `ctrl+r` leaves it alone
+while the interval has not run out and says so; press `ctrl+r` again within
+three seconds to include it. The stack's header in the preview says when it
+was last fetched. If the sign-in expires the stack's error says so: open
+`claude` in that profile and run `/mcp` to sign in again.
 
 ## Usage
 

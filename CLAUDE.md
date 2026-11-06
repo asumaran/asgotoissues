@@ -5,7 +5,7 @@ Guidance for working in this repository.
 ## What this is
 
 `asgotoissues` is a herdr plugin popup that lists the user's open issues (Jira
-tickets and GitHub issues) across every stack configured in
+tickets, GitHub issues and Linear issues) across every stack configured in
 `~/.claude/asdev.local.md`, grouped by stack as a tree (a sub-task under its
 story, the story under its epic, even when the epic is not the user's), with
 the pull requests linked to each ticket and what each one needs (conflicts,
@@ -57,6 +57,14 @@ Files are split by concern but everything stays in `package main`:
   (`ghRun`, in `ghrun.go`, is the seam tests replace; `ghSearch` pages any
   node type), issue mapping, state from labels, the parent and the parent's
   parent nested in the query and turned into ghosts.
+- `linear.go`: the Linear provider: a headless `claude -p` under the
+  stack's Claude Code profile (`linearRun`, the seam the tests replace;
+  `ASGOTOISSUES_LINEAR` replaces the command) asked to make fixed Linear
+  MCP calls (`list_issues` per live state type, `get_issue` for the
+  parents the list does not hold, level by level like `jira.go`'s ghosts),
+  `parseLinearStream` (the MCP's own answers read out of the stream-json
+  tool results; the model's prose never), the mapping (`linearIssues`,
+  `linearState`, `nameOf` for fields whose shape varies).
 - `pull.go`: the `pull` struct (the cache's format for a PR), what its row
   says about it, each word with a level (attention) and a tone (its color):
   `state` (merged, closed, draft, changes requested, approved, in review),
@@ -116,8 +124,10 @@ Files are split by concern but everything stays in `package main`:
 - `wiki.go`: Jira wiki markup → Markdown (headings, lists, code/noformat/
   quote blocks, tables, links, mono/bold/italic, mentions).
 - `cache.go`: `issuecache.json` (issues and pulls) load/save (through
-  `jsonfile.go`), 60s freshness debounce, and `stateDir()`, a wrapper over
-  `stateDirFor` (`statedir.go`).
+  `jsonfile.go`), 60s freshness debounce, the per-source stamps of the
+  sources with their own interval (`Sources`, `stamp`, `due`: which
+  sources a refresh fetches now and which it leaves out), and
+  `stateDir()`, a wrapper over `stateDirFor` (`statedir.go`).
 - `filter.go`: entries (a ticket and its PRs), the row kinds (header,
   group, section, issue, pull) and what a row carries to be drawn (its
   guides, its path by phase), corpora (the title the row shows first, the
@@ -561,7 +571,58 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   says whether the description is wiki markup or already Markdown. The UI,
   the filter and the preview never ask which tracker an issue came from. To
   add a tracker: implement `provider`, give it a kind, handle the kind in
-  `sourcesOf` and `stackTrackers`.
+  `sourcesOf` and `stackTrackers` (Jira, GitHub and Linear today).
+- **Linear goes through Claude Code's Linear MCP** (`linear.go`), not
+  through Linear's API: the user keeps no API key, the MCP is signed in
+  once in a Claude Code profile (`linear.claude_config_dir`, e.g.
+  `~/.claude-syft`, the profile the `csyft` shell function selects; empty
+  is the default profile). A fetch runs `claude -p --model <haiku>
+  --output-format stream-json --verbose --no-session-persistence --tools
+  ToolSearch --allowedTools ToolSearch,mcp__linear__list_issues,mcp__linear__get_issue
+  --max-turns 16 --system-prompt …` with `CLAUDE_CONFIG_DIR` set and the
+  temp dir as cwd (no project CLAUDE.md, hook or `.mcp.json` of wherever
+  the popup was opened), and a prompt that names the calls and their exact
+  arguments: `list_issues` once per live state type (`started`,
+  `unstarted`, `backlog`, `triage`: done and canceled tickets never enter
+  the model's context) with `assignee: "me"`, `limit: 250`, the fields the
+  row and the preview need, paged with `cursor`; then, per level of
+  parents the list does not hold (three at most, ten ids per run),
+  `get_issue` for each, back as ghosts. The binary reads the MCP's own
+  answers out of the stream's `tool_result`s (`parseLinearStream`) and
+  never the model's text (in a probe Haiku summarised 30 issues down to 3
+  in its answer). A `tool_result` flagged as an error (an expired sign-in
+  reads like that) and a result envelope that is not a success are the
+  source's error; a run with no tool call is `claude made no Linear MCP
+  call`. **`--setting-sources ""` must not be passed**: it drops the
+  profile's user-scoped MCP servers (verified: 0 MCP servers with it);
+  `--tools ""` keeps them but drops ToolSearch, which the deferred MCP
+  tools need. The MCP's `id` is the identifier (`SYF2-6136`), `parentId`
+  one of identifier or UUID, so `uuid` is fetched too and parents resolve
+  by either; the state: a name holding "block" → blocked, `statusType`
+  started → doing, else to do; priority, labels, team and project are read
+  loosely (`nameOf`: a string, an object's key/name, a list joined) into
+  `Meta`. Each run costs the profile's account a few cents and ~10 s,
+  hence the interval below. Re-sign in: open `claude` in that profile
+  (`csyft`) and run `/mcp`.
+- **A source with its own refresh interval** (`source.every`; the Linear
+  source's `refresh_every`, 2h by default): `issuecache.json` keeps
+  `sources`, the time each such source last answered (`stamp`, set on a
+  successful `sourceMsg` and in `-dump`'s path; never on a failure), and
+  `cache.due` splits the sources into the ones a refresh fetches and the
+  ones it leaves out (a stamp younger than the interval; a missing stamp,
+  as in an older snapshot, is due). The opening refresh (`newModel` fills
+  `toFetch`/`skipped`, `Init` launches `toFetch`), `ctrl+r` and `-dump`
+  all go through it; a skipped source is not fetched and not an error, so
+  `mergeStacks` keeps its cached issues and the refresh is still complete
+  (FetchedAt advances, folds prune: its cached issues are still entries).
+  `ctrl+r` that skipped something flashes `syft linear skipped (fetched 1h
+  ago · refreshes every 2h) · ctrl+r again to include it`, and a second
+  press within 3 s (`refreshAgain`) adds the skipped sources to the
+  running refresh (`refreshing syft linear too`), or forces them when the
+  first one already finished; otherwise a press while one runs still says
+  `already refreshing`. The stack header's preview says `linear: fetched
+  1h ago · refreshes every 2h` (`sourceAge`), and `-dump`'s stacks block
+  prints the same after the profile's path.
 - **The cache file is a contract**: `issue`'s and `pull`'s JSON tags are the
   format of `issuecache.json` and of the fixtures in `scripts/pty-check.py`.
   New fields are `omitempty` and an issue without them must keep working (no
@@ -572,9 +633,11 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
 - **Config source is asdev's file, on purpose**: one place to declare a
   stack for both the Claude plugin and this picker. Only
   `stacks.<name>.issues`, `stacks.<name>.jira.{base_url,type,email,api_token_env,username}`,
-  `stacks.<name>.github.{org,orgs,account}` and `stacks.<name>.repos` are
-  read. Without `issues:` a stack lists Jira when it has a `jira.base_url`,
-  so a config that only knows about Jira needs no changes.
+  `stacks.<name>.github.{org,orgs,account}`,
+  `stacks.<name>.linear.{claude_config_dir,refresh_every}` and
+  `stacks.<name>.repos` are read. Without `issues:` a stack lists Jira when
+  it has a `jira.base_url`, so a config that only knows about Jira needs no
+  changes; `linear` in `issues:` needs the `linear:` block, even empty.
 - **Two stacks can share a GitHub owner** (`ghScopes`, `config.go`): a
   stack's GitHub searches cover its owners (`user:` qualifiers), except an
   owner another listed stack shares, where each stack covers only its own
@@ -607,7 +670,9 @@ Keybinding (user config): `prefix+t` / `ctrl+alt+t` → `plugin_action`
   `issuecache.json`; snapshots fresher than 60s skip the refresh. `ctrl+r`
   is the manual refresh: it refetches every source now, whatever the
   snapshot's age (the refresh mark at the foot is the feedback; a press
-  while one runs flashes `already refreshing`); it is in the panel's key
+  while one runs flashes `already refreshing`), except a source with its
+  own interval that answered within it (the Linear source: a second press
+  within 3 s includes it, see above); it is in the panel's key
   list, not on the foot's short help. A complete refresh, manual or not,
   clears a standing `refresh failed` mark. Sources
   (one per tracker of a stack, plus its pulls source) refresh concurrently,
@@ -706,15 +771,21 @@ ghosts, the query walk, the order, PRs and show modes, the guides, the
 phase view, the folds of a level, own levels), the local counters against
 a fake `gitRun`, the workspace jump against a fake `herdrRun` (the match
 order, `rowTarget`, the key's gates), the short titles against a fake `summarizeRun` (the
-batches, the hashes, the answers the CLI gives), ranking, grouping, key
+batches, the hashes, the answers the CLI gives), the Linear provider against
+a fake `linearRun` (the prompts, the stream's tool results read and the
+model's text ignored, parents by identifier and by UUID, the ghost levels,
+the tool, envelope and no-call errors; `runLinearCLI` against a stub
+command: the prompt as the last argument, `CLAUDE_CONFIG_DIR`), the
+per-source interval (`due`, the stamps on success only, the opening refresh
+leaving a fresh source out, `ctrl+r`'s skip flash and second press), ranking, grouping, key
 handling, partial refresh failure, View content: the rows as drawn, their
 colors, no bold), the layout's effective fallback and its geometry (`listW`,
 `listH`, `detailsH`, `stackMain`) at several sizes, the saved folds
 (round-trip, pruning after a complete refresh only, the level clamped to the
 tree's own deepest). `TestMain` points `HERDR_PLUGIN_STATE_DIR` at a temp dir
 so tests never touch the real cache, `ASGOTOISSUES_CHECKOUTS` at it too so
-no real checkout is read, stubs `herdrRun` with a failure so no test
-touches the real herdr, turns the summarizer off and lists everything
+no real checkout is read, stubs `herdrRun` and `linearRun` with a failure
+so no test touches the real herdr or runs Claude, turns the summarizer off and lists everything
 (`defaultShow`); a test that presses a key under the panel, saves a setting,
 or folds or unfolds a row (which now also persists to `folds.json`) takes a
 temp dir of its own, so one test's fold or setting never leaks into the

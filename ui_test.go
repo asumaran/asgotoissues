@@ -316,6 +316,10 @@ func TestMain(m *testing.M) {
 	herdrRun = func(context.Context, ...string) ([]byte, error) {
 		return nil, errTest("herdr stubbed out in tests")
 	}
+	// Nor Claude: the Linear tests swap in their own fake.
+	linearRun = func(context.Context, string, string) ([]byte, error) {
+		return nil, errTest("claude stubbed out in tests")
+	}
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -724,5 +728,113 @@ func TestSpaceIsNotAQuery(t *testing.T) {
 		if m.cursor != at || len(m.rows) != rows {
 			t.Errorf("after %q: cursor %d -> %d, rows %d -> %d", k, at, m.cursor, rows, len(m.rows))
 		}
+	}
+}
+
+// intervalSource is a source with its own refresh interval, added to a test
+// model's sources (its fetch is never run: the commands are not executed).
+func intervalSource(every time.Duration) source {
+	return source{"alpha", linearProvider{stack{Name: "alpha"}}, every}
+}
+
+func TestCacheDue(t *testing.T) {
+	now := time.Now()
+	plain := source{"alpha", jiraProvider{stack{Name: "alpha"}}, 0}
+	slow := intervalSource(2 * time.Hour)
+	c := issueCache{}
+	if due, skipped := c.due([]source{plain, slow}, now, false); len(due) != 2 || len(skipped) != 0 {
+		t.Errorf("never stamped: due %d skipped %d", len(due), len(skipped))
+	}
+	c.stamp(slow.id(), now.Add(-time.Hour))
+	if due, skipped := c.due([]source{plain, slow}, now, false); len(due) != 1 || len(skipped) != 1 || skipped[0].id() != "alpha/linear" {
+		t.Errorf("fresh stamp: due %d skipped %d", len(due), len(skipped))
+	}
+	if due, _ := c.due([]source{plain, slow}, now, true); len(due) != 2 {
+		t.Errorf("force should fetch it")
+	}
+	c.stamp(slow.id(), now.Add(-3*time.Hour))
+	if due, _ := c.due([]source{plain, slow}, now, false); len(due) != 2 {
+		t.Errorf("an old stamp is due")
+	}
+}
+
+func TestManualRefreshHonoursTheInterval(t *testing.T) {
+	m := testModel(t)
+	m.sources = append(m.sources, intervalSource(2*time.Hour))
+	m.cache.stamp("alpha/linear", time.Now().Add(-time.Hour))
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	res := mm.(model)
+	if res.pending != len(res.sources)-1 || len(res.skipped) != 1 {
+		t.Fatalf("the fresh interval source should be skipped: pending=%d skipped=%d", res.pending, len(res.skipped))
+	}
+	if !strings.HasPrefix(res.flash.text, "alpha linear skipped (fetched 1h ago · refreshes every 2h) · ctrl+r again") || res.flash.bad {
+		t.Errorf("flash = %q", res.flash.text)
+	}
+	// A second press right away includes it in the running refresh.
+	mm, cmd := res.handleKey(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	again := mm.(model)
+	if again.pending != len(again.sources) || len(again.skipped) != 0 || again.flash.text != "refreshing alpha linear too" || cmd == nil {
+		t.Errorf("second press: pending=%d skipped=%d flash=%q", again.pending, len(again.skipped), again.flash.text)
+	}
+	// A third press is just a press while one runs.
+	mm, _ = again.handleKey(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if third := mm.(model); third.flash.text != "already refreshing" || third.pending != again.pending {
+		t.Errorf("third press: flash=%q pending=%d", third.flash.text, third.pending)
+	}
+	// Long after, a press is a plain refresh again, and an old stamp is due.
+	m.cache.stamp("alpha/linear", time.Now().Add(-3*time.Hour))
+	mm, _ = m.handleKey(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if res := mm.(model); res.pending != len(res.sources) || len(res.skipped) != 0 {
+		t.Errorf("an old stamp: pending=%d skipped=%d", res.pending, len(res.skipped))
+	}
+}
+
+func TestSourceStampOnSuccessOnly(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	m := testModel(t)
+	m.sources = append(m.sources, intervalSource(2*time.Hour))
+	m.refreshing, m.pending = true, 2
+	before := time.Now()
+	mm, _ := m.Update(sourceMsg{source: "alpha/linear", err: errTest("boom")})
+	if at, ok := mm.(model).cache.Sources["alpha/linear"]; ok {
+		t.Errorf("a failed source must not be stamped: %v", at)
+	}
+	mm, _ = mm.(model).Update(sourceMsg{source: "alpha/jira", issues: nil})
+	if _, ok := mm.(model).cache.Sources["alpha/jira"]; ok {
+		t.Errorf("a source without an interval is not stamped")
+	}
+	m = testModel(t)
+	m.sources = append(m.sources, intervalSource(2*time.Hour))
+	m.refreshing, m.pending = true, 1
+	mm, _ = m.Update(sourceMsg{source: "alpha/linear", issues: nil})
+	res := mm.(model)
+	if at, ok := res.cache.Sources["alpha/linear"]; !ok || at.Before(before) {
+		t.Fatalf("a source that answered is stamped: %v %v", at, ok)
+	}
+	if saved := loadCache(); saved.Sources["alpha/linear"].IsZero() {
+		t.Errorf("the stamp should be in the saved snapshot: %+v", saved.Sources)
+	}
+	if res.stale || !res.cache.FetchedAt.After(before.Add(-time.Second)) {
+		t.Errorf("a refresh of the due sources alone is complete: stale=%v fetched=%v", res.stale, res.cache.FetchedAt)
+	}
+}
+
+func TestNewModelSkipsAFreshIntervalSource(t *testing.T) {
+	stacks := []stack{
+		{Name: "a", Trackers: []string{kindJira}, BaseURL: "https://a.example"},
+		{Name: "l", Trackers: []string{kindLinear}, HasLinear: true, LinearEvery: time.Hour},
+	}
+	cache := issueCache{FetchedAt: time.Now().Add(-time.Hour), Sources: map[string]time.Time{"l/linear": time.Now().Add(-10 * time.Minute)}}
+	m := newModel(stacks, cache, true)
+	if !m.refreshing || m.pending != 1 || len(m.toFetch) != 1 || m.toFetch[0].id() != "a/jira" || len(m.skipped) != 1 {
+		t.Errorf("stale open: refreshing=%v pending=%d toFetch=%d skipped=%d", m.refreshing, m.pending, len(m.toFetch), len(m.skipped))
+	}
+	only := newModel(stacks[1:], cache, true)
+	if only.refreshing || only.pending != 0 {
+		t.Errorf("nothing due: refreshing=%v pending=%d", only.refreshing, only.pending)
+	}
+	old := newModel(stacks, issueCache{}, true)
+	if old.pending != 2 || len(old.skipped) != 0 {
+		t.Errorf("an older snapshot without stamps fetches everything: pending=%d", old.pending)
 	}
 }

@@ -1,3 +1,9 @@
+## v0.15.0 (2026-11-06)
+
+* feat(linear): read linear issues via claude's mcp (c0460d7)
+* chore(prshare): sync the shared PR cache format (5075d07)
+* chore(prs): port per-account backoff from asmeta prshare.go (7d04f84)
+
 ## v0.14.0 (2026-10-30)
 
 * feat(github): per-stack gh account and repo scope (736906f)
